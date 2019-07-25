@@ -1,0 +1,9 @@
+append:
+  global:
+    name: -predefpad
+
+set:
+  maskrcnn:
+    predefined_padding: 'True'
+
+

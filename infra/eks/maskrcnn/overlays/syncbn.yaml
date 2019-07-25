@@ -1,0 +1,10 @@
+append:
+  global:
+    name: -syncbn
+
+set:
+  maskrcnn:
+    experiment_group: syncbn
+    backbone_norm: SyncBN
+
+

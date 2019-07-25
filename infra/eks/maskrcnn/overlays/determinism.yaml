@@ -1,0 +1,8 @@
+append:
+  global:
+    name: -determinism
+
+set:
+  maskrcnn:
+    image: armandmcqueen/tensorpack-mask-rcnn:dev-determinism_armand
+

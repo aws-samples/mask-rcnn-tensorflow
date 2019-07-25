@@ -1,0 +1,22 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: tensorpack-mask-rcnn-p3
+  region: us-east-1
+
+nodeGroups:
+  - name: ng-p3-1c
+    instanceType: p3.16xlarge
+    availabilityZones: ["us-east-1c"]
+    desiredCapacity: 1
+    iam:
+      withAddonPolicies:
+        imageBuilder: true
+        ebs: true
+        fsx: true
+        efs: true
+    ssh:
+      allow: true
+      publicKeyName: 'maskrcnn'
