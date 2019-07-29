@@ -1,12 +1,12 @@
 # To train with docker
 
 ## To run on single-node
-Refer to [Run with docker](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/docker.md#using-docker "Run with docker")
+Refer to [Run with docker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/docker/docker.md#using-docker "Run with docker")
 
 ## To run on multi-node
-Make sure you have your data ready as in [Run with docker](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/docker.md#using-docker "Run with docker").
+Make sure you have your data ready as in [Run with docker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/docker/docker.md#using-docker "Run with docker").
 ### SSH settings and build container
-- ssh into your master node and clone the repo by `git clone https://github.com/aws-samples/mask-rcnn-tensorflow.git`
+- ssh into your master node and clone the repo by `git clone https://github.com/armandmcqueen/tensorpack-mask-rcnn.git`
 - run `cd ~/tensorpack-mask-rcnn/infra/docker/`
 - create your hosts file without slots
 - run `./ssh_and_build.sh $YOUR_MASTER_IP $YOUR_HOST_FILE`, this will enable the passwordless ssh connection and build the container on each of the nodes

@@ -23,12 +23,12 @@ A pre-built dockerfile is available in DockerHub under `armandmcqueen/tensorpack
 - Data preprocessing
   - Follow the [data preprocess](https://github.com/tensorpack/tensorpack/tree/master/examples/FasterRCNN)
   - If you want to use EKS or Sagemaker, you need to create your own S3 bucket which contains the data, and change the S3 bucket name in the following files:
-    - EKS: [P3 config](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/eks/fsx/p3/stage-data.yaml), [P3dn config](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/eks/fsx/p3dn/stage-data.yaml)
-    - SageMaker: [S3 download](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/sm/run_mpi.py#L122)
+    - EKS: [P3 config](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/eks/fsx/p3/stage-data.yaml), [P3dn config](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/eks/fsx/p3dn/stage-data.yaml)
+    - SageMaker: [S3 download](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/sm/run_mpi.py#L122)
 - Container is recommended for training
-  - To train with docker, refer to [Docker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/docker)
-  - To train with Amazon EKS, refer to [EKS](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/eks)
-  - To train with Amazon SageMaker, refer to [SageMaker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/sm)
+  - To train with docker, refer to [Docker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/docker)
+  - To train with Amazon EKS, refer to [EKS](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/eks)
+  - To train with Amazon SageMaker, refer to [SageMaker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/sm)
 
 ### Training results
 The result was running on P3dn.24xl instances using EKS.
