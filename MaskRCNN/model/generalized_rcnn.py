@@ -73,8 +73,8 @@ class DetectionModel(ModelDesc):
 
 
         opt = tf.train.MomentumOptimizer(lr, 0.9)
-        if cfg.TRAIN.NUM_GPUS < 8:
-            opt = optimizer.AccumGradOptimizer(opt, 8 // cfg.TRAIN.NUM_GPUS)
+        #if cfg.TRAIN.NUM_GPUS < 8:
+        #    opt = optimizer.AccumGradOptimizer(opt, 8 // cfg.TRAIN.NUM_GPUS)
         if cfg.TRAIN.GRADIENT_CLIP != 0:
             opt = GradientClipOptimizer(opt, cfg.TRAIN.GRADIENT_CLIP)
         return opt
