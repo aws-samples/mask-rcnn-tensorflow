@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 #!/usr/bin/env bash
 cd /opt/ml/code/tensorpack-mask-rcnn
 BATCH_SIZE_PER_GPU=4
