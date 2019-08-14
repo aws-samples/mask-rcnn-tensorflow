@@ -11,40 +11,49 @@
 
 ### (1) Set up EKS cluster
 
-- Install the eksctl from https://github.com/weaveworks/eksctl
+- Install the [eksctl](https://github.com/weaveworks/eksctl):
+  ```
+  brew tap weaveworks/tap
+  brew install weaveworks/tap/eksctl
+  ```
+  - If not already, install [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl-binary-with-curl-on-macos)
 
 - There are some requirements when setting up the EKS cluster:
     - Make sure the nodes have fsx access
     - Make sure the nodes live in a single AZ
     - Make sure the nodes have the NVIDIA GPU daemonset
 
-- The commands in `eksctl/p3_create.sh` handles those requirements.
-    - You should update `eksctl/p3_config.yaml` to match your needs (name/region/vpc-id/subnets/instance-type/az/capacity/ssh-public-key)
+- The commands in `eksctl/p3dn_create.sh` handles those requirements.
+    - You should update `eksctl/p3dn_config.yaml` to match your needs (name/region/vpc-id/subnets/instance-type/az/capacity/ssh-public-key)
         - sshPublicKeyPath is the name of an EC2 KeyPair.
         - some examples can be found at https://github.com/weaveworks/eksctl/tree/master/examples
     - Run the commands individually, not via script
         - you need to update the `KUBECONFIG` to match your path
-
+        - you need to run the commands in corresponding folders(p3/p3dn)
 
 
 ### (2) Set up FSx for Lustre
 
 - Create FSx filesystem if this is the first time
-    - Alter FSx security group to allow port 988 traffic from anywhere - https://docs.aws.amazon.com/fsx/latest/LustreGuide/limit-access-security-groups.html#fsx-vpc-security-groups
-        - When add the inbound rule, the `Type` should be `Custom TCP Rule`
-    - Add S3 permissions to worker role so stage-data.yaml can download the files
-        - Open the AWS IAM console, find the eks nodegroup role created by eksctl
-        - add the s3 policy (e.g. s3 AWS Tensorflow benchmarking policy)
+    - Find your cluster's security groups
+        - Open AWS EC2 console
+        - Find "Security Groups" on left side-bar
+        - Find your security groups by search your cluster name, by default there will be three.
+    - Alter the security groups inbound rules to allow port 988 traffic from anywhere - https://docs.aws.amazon.com/fsx/latest/LustreGuide/limit-access-security-groups.html#fsx-vpc-security-groups
+    - Add S3 permissions to worker roles so stage-data.yaml can download the files
+        - Open the AWS IAM console, find the eks nodegroup roles by searching your cluster name
+        - add the s3 policy (e.g. AmazonS3FullAccess)
 - Add FSx support to the cluster
     - Install FSx CSI driver with `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-fsx-csi-driver/master/deploy/kubernetes/manifest.yaml`
 - Add FSx as a persistant volume and claim
+    - The following commands should be run under path `mask-rcnn-tensorflow/infra/eks`
     - Customize `fsx/pv-fsx.yaml` for your FSx file-system id and AWS region
-    - Execute: `kubectl apply -f fsx/p3/pv-fsx.yaml`
+    - Execute: `kubectl apply -f fsx/p3dn/pv-fsx.yaml`
     - Check to see the persistent-volume was successfully created by executing: `kubectl get pv`
-    - Execute: `kubectl apply -f fsx/p3/pvc-fsx.yaml` to create an EKS persistent-volume-claim
+    - Execute: `kubectl apply -f fsx/p3dn/pvc-fsx.yaml` to create an EKS persistent-volume-claim
 - Stage data on fsx
-    - Customize `fsx/stage-data.yaml` with image name and location of data on s3
-    - Run `kubectl apply -f fsx/p3/stage-data.yaml`
+    - Customize `fsx/p3dn/stage-data.yaml` with image name and location of data on s3
+    - Run `kubectl apply -f fsx/p3dn/stage-data.yaml`
     - Confirm that it worked with  `kubectl apply -f fsx/attach-pvc-2.yaml` and `kubectl exec attach-pvc-2 -it -- /bin/bash`
     - To clean up: `kubectl delete pod stage-data`. It can be helpful to leave the `attach-pvc-2` pod running to view the fsx contents (e.g. experiment results) later.
 
@@ -67,6 +76,10 @@
 - Update `maskrcnn/values.yaml` with your info
     - To launch the training, use `helm install --name maskrcnn ./maskrcnn/`
     - To delete, use `helm del --purge maskrcnn`
+
+### (6) Check training Status
+- Use `kubectl get pods` to show the all the pods
+- Use `kubectl logs $pod_name` to show the logs in a certain pod. The launcher pod should contain the information you need.
 
 ### Deleting the cluster
 
