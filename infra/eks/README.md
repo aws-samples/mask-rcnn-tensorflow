@@ -45,9 +45,12 @@
 - The following commands should be run under path `mask-rcnn-tensorflow/infra/eks`
 - Add FSx support to the cluster
     - Add Secret
-        - Create a
-        - Change the `aws_access_key_id` and `aws_secret_access_key` in fsx folder according to
-        -`kubectl apply -f fsx/secret.yaml`
+        - Create new IAM user
+            - The access type should be Programmatic access
+            - Attach the AmazonFSxFullAccess from "Attach existing policies directly"
+            - After the user is created, record your `aws_access_key_id` and `aws_secret_access_key` before you close the page
+        - Change the `aws_access_key_id` and `aws_secret_access_key` in the `fsx/secret.yaml`
+        - `kubectl apply -f fsx/secret.yaml`
     - Install FSx CSI driver with:
         - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-fsx-csi-driver/v0.1.0/deploy/kubernetes/controller.yaml`
         - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-fsx-csi-driver/v0.1.0/deploy/kubernetes/node.yaml`
