@@ -23,13 +23,12 @@
     - Make sure the nodes live in a single AZ
     - Make sure the nodes have the NVIDIA GPU daemonset
 
-- The commands in `eksctl/p3dn_create.sh` handles those requirements.
-    - You should update `eksctl/p3dn_config.yaml` to match your needs (name/region/vpc-id/subnets/instance-type/az/capacity/ssh-public-key)
+- The commands in `eksctl/create.sh` handles those requirements.
+    - You should update `eksctl/config.yaml` to match your needs (name/region/vpc-id/subnets/instance-type/az/capacity/ssh-public-key)
         - sshPublicKeyPath is the name of an EC2 KeyPair.
         - some examples can be found at https://github.com/weaveworks/eksctl/tree/master/examples
     - Run the commands individually, not via script
         - you need to update the `KUBECONFIG` to match your path
-        - you need to run the commands in corresponding folders(p3/p3dn)
 
 
 ### (2) Set up FSx for Lustre
@@ -43,17 +42,23 @@
     - Add S3 permissions to worker roles so stage-data.yaml can download the files
         - Open the AWS IAM console, find the eks nodegroup roles by searching your cluster name
         - add the s3 policy (e.g. AmazonS3FullAccess)
+- The following commands should be run under path `mask-rcnn-tensorflow/infra/eks`
 - Add FSx support to the cluster
-    - Install FSx CSI driver with `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-fsx-csi-driver/master/deploy/kubernetes/manifest.yaml`
+    - Add Secret
+        - Create a
+        - Change the `aws_access_key_id` and `aws_secret_access_key` in fsx folder according to
+        -`kubectl apply -f fsx/secret.yaml`
+    - Install FSx CSI driver with:
+        - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-fsx-csi-driver/v0.1.0/deploy/kubernetes/controller.yaml`
+        - `kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-fsx-csi-driver/v0.1.0/deploy/kubernetes/node.yaml`
 - Add FSx as a persistant volume and claim
-    - The following commands should be run under path `mask-rcnn-tensorflow/infra/eks`
     - Customize `fsx/pv-fsx.yaml` for your FSx file-system id and AWS region
-    - Execute: `kubectl apply -f fsx/p3dn/pv-fsx.yaml`
+    - Execute: `kubectl apply -f fsx/pv-fsx.yaml`
     - Check to see the persistent-volume was successfully created by executing: `kubectl get pv`
-    - Execute: `kubectl apply -f fsx/p3dn/pvc-fsx.yaml` to create an EKS persistent-volume-claim
+    - Execute: `kubectl apply -f fsx/pvc-fsx.yaml` to create an EKS persistent-volume-claim
 - Stage data on fsx
-    - Customize `fsx/p3dn/stage-data.yaml` with image name and location of data on s3
-    - Run `kubectl apply -f fsx/p3dn/stage-data.yaml`
+    - Customize `fsx/tage-data.yaml` with image name and location of data on s3
+    - Run `kubectl apply -f fsx/stage-data.yaml`
     - Confirm that it worked with  `kubectl apply -f fsx/attach-pvc-2.yaml` and `kubectl exec attach-pvc-2 -it -- /bin/bash`
     - To clean up: `kubectl delete pod stage-data`. It can be helpful to leave the `attach-pvc-2` pod running to view the fsx contents (e.g. experiment results) later.
 
