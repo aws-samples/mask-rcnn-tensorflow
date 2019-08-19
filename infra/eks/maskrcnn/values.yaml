@@ -35,3 +35,4 @@ maskrcnn:
   bbox_reg_weights: '[10., 10., 5., 5.]'
   result_score_thresh: 0.05
   gpus_per_node: 8
+  gradient_clip: 0
