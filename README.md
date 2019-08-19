@@ -25,7 +25,7 @@ A pre-built dockerfile is available in DockerHub under `armandmcqueen/tensorpack
   - The pre-trained resnet backbone can be donloaded from [ImageNet-R50-AlignPadding.npz](http://models.tensorpack.com/FasterRCNN/ImageNet-R50-AlignPadding.npz)
   - The file folder needs to have the following directory structure:
   ```
-  COCO/DIR/
+  data/
     annotations/
       instances_train2017.json
       instances_val2017.json
@@ -37,9 +37,12 @@ A pre-built dockerfile is available in DockerHub under `armandmcqueen/tensorpack
       # image files that are mentioned in corresponding json
   ```
   - If you want to use COCO 2014, please refer to [here](https://github.com/tensorpack/tensorpack/tree/master/examples/FasterRCNN)
-  - If you want to use EKS or Sagemaker, you need to create your own S3 bucket which contains the data, and change the S3 bucket name in the following files:
+  - If you want to use EKS or Sagemaker, you need to create your own S3 bucket which contains the data in the same directory structure, and change the S3 bucket name in the following files:
     - EKS: [P3 config](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/eks/fsx/p3/stage-data.yaml), [P3dn config](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/eks/fsx/p3dn/stage-data.yaml)
     - SageMaker: [S3 download](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/sm/run_mpi.py#L122)
+  - If you want to use EKS, you also need to create the a FSx filesystem
+    - You don't need to link your S3 bucket if you have followed the previous steps
+    - You need to change the FSx filesystem id in [pv-fsx](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/eks/fsx/pv-fsx.yaml) file.
 - Container is recommended for training
   - To train with docker, refer to [Docker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/docker)
   - To train with Amazon EKS, refer to [EKS](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/eks)

@@ -19,6 +19,7 @@
   - If not already, install [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/#install-kubectl-binary-with-curl-on-macos)
 
 - There are some requirements when setting up the EKS cluster:
+    - It is recommended to run in US-East-1 (N.Virginia)
     - Make sure the nodes have fsx access
     - Make sure the nodes live in a single AZ
     - Make sure the nodes have the NVIDIA GPU daemonset
@@ -33,7 +34,8 @@
 
 ### (2) Set up FSx for Lustre
 
-- Create FSx filesystem if this is the first time
+- Make sure you have followed the data preprocessing part in [README](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/README.md)
+- Handle the permissions
     - Find your cluster's security groups
         - Open AWS EC2 console
         - Find "Security Groups" on left side-bar
