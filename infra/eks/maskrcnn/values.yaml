@@ -12,7 +12,7 @@ maskrcnn:
   warmup_lr: 0.000416667
   shared_fs: fsx
   data_fs: fsx
-  shared_pvc: tensorpack-fsx-2
+  shared_pvc: tensorpack-fsx
   data_dir: ''
   working_dir: /tensorpack-mask-rcnn
   images_per_epoch: 120000
