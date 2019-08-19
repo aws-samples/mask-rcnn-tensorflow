@@ -4,22 +4,22 @@ global:
 maskrcnn:
   experiment_group: default # For organizing result dirs.
   gpus: 8
-  batch_size_per_gpu: 1
-  image: armandmcqueen/tensorpack-mask-rcnn:master-latest # image URL from ECR or DockerHub
+  batch_size_per_gpu: 4
+  image: fewu/tensorpack-mask-rcnn:master-latest # image URL from ECR or DockerHub
   train_script: /tensorpack-mask-rcnn/MaskRCNN/train.py
   fp_16: 1 # TODO: Setting this to 0 does not disable FP16, it just disables loss scaling
   base_lr: 0.00125
   warmup_lr: 0.000416667
   shared_fs: fsx
   data_fs: fsx
-  shared_pvc: tensorpack-fsx
+  shared_pvc: tensorpack-fsx-2
   data_dir: ''
-  working_dir:  /tensorpack-mask-rcnn
+  working_dir: /tensorpack-mask-rcnn
   images_per_epoch: 120000
-  lr_epoch_schedule: "[(8, 0.1), (10, 0.01), (12, None)]"
+  lr_epoch_schedule: '[(8, 0.1), (10, 0.01), (12, None)]'
   eval_period_in_epochs: 24
-  data_train: "[\"train2017\"]"
-  data_val: "(\"val2017\")"
+  data_train: '["train2017"]'
+  data_val: ("val2017")
   mode_fpn: 'True'
   mode_mask: 'True'
   backbone_norm: FreezeBN
@@ -27,8 +27,8 @@ maskrcnn:
   predefined_padding: 'True'
   topk_per_image: 'True'
   image_pull_policy: Always
-  horovod_cycle_time: "0.5"
-  horovod_fusion_threshold: "67108864"
+  horovod_cycle_time: '0.5'
+  horovod_fusion_threshold: '67108864'
   nccl_socket_ifname: ^lo,docker0
   nccl_min_rings: 8
   nccl_debug: INFO
