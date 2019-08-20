@@ -31,7 +31,7 @@ echo ""
 -x HOROVOD_CYCLE_TIME=0.5 \
 -x HOROVOD_FUSION_THRESHOLD=67108864 \
 --output-filename /logs/mpirun_logs \
-/usr/local/bin/python3 /tensorpack-mask-rcnn/MaskRCNN/train.py \
+/usr/local/bin/python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
 --logdir /logs/train_log \
 --fp16 \
 --throughput_log_freq ${THROUGHPUT_LOG_FREQ} \

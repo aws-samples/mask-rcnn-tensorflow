@@ -5,7 +5,7 @@ metadata:
 spec:
   containers:
   - name: attach-pvc
-    image: armandmcqueen/tensorpack-mask-rcnn:master-latest
+    image: fewu/mask-rcnn-tensorflow:master-latest
     command: ["/bin/bash"]
     securityContext:
       privileged: true

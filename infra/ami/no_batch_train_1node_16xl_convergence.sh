@@ -50,7 +50,7 @@ TENSORPACK_FP16=1 \
 -x TENSORPACK_FP16 \
 -x LD_LIBRARY_PATH -x PATH \
 --output-filename ${LOG_DIR}/mpirun_logs \
-/home/ubuntu/anaconda3/envs/${VENV}/bin/python3 /home/ubuntu/tensorpack-mask-rcnn/MaskRCNN/train.py \
+/home/ubuntu/anaconda3/envs/${VENV}/bin/python3 /home/ubuntu/mask-rcnn-tensorflow/MaskRCNN/train.py \
 --logdir ${LOG_DIR} \
 --fp16 \
 --throughput_log_freq 2000 \

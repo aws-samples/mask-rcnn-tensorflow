@@ -5,7 +5,7 @@ metadata:
 spec:
   containers:
   - name: tensorboard
-    image: armandmcqueen/tensorpack-mask-rcnn:dev-master
+    image: fewu/mask-rcnn-tensorflow:dev-master
     command: ["tensorboard"]
     args: ["--logdir=/fsx"]
     securityContext:

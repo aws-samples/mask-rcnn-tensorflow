@@ -4,5 +4,5 @@ append:
 
 set:
   maskrcnn:
-    image: armandmcqueen/tensorpack-mask-rcnn:dev-larc
+    image: armandmcqueen/mask-rcnn-tensorflow:dev-larc
 
