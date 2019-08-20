@@ -40,10 +40,10 @@
         - Open AWS EC2 console
         - Find "Security Groups" on left side-bar
         - Find your security groups by search your cluster name, by default there will be three.
-    - Alter the security groups inbound rules to allow port 988 traffic from anywhere - https://docs.aws.amazon.com/fsx/latest/LustreGuide/limit-access-security-groups.html#fsx-vpc-security-groups
+    - Alter the security groups inbound rules to allow port 988 traffic from anywhere - [To add inbound rules to your security group](https://docs.aws.amazon.com/fsx/latest/LustreGuide/limit-access-security-groups.html#fsx-vpc-security-groups)
     - Add S3 permissions to worker roles so stage-data.yaml can download the files
-        - Open the AWS IAM console, find the eks nodegroup roles by searching your cluster name
-        - add the s3 policy (e.g. AmazonS3FullAccess)
+        - Open the AWS IAM console, find the eks nodegroup roles by searching your cluster name, by default there will be two
+        - add the s3 policy (e.g. AmazonS3FullAccess) to all of them
 - The following commands should be run under path `mask-rcnn-tensorflow/infra/eks`
 - Add FSx support to the cluster
     - Add Secret
