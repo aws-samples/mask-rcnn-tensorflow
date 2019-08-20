@@ -37,7 +37,7 @@ spec:
     command:
     -  sh
     - /etc/config/stage-data.sh
-    image: armandmcqueen/tensorpack-mask-rcnn:master-latest
+    image: fewu/mask-rcnn-tensorflow:master-latest
     imagePullPolicy: IfNotPresent
     volumeMounts:
     - mountPath: /etc/config

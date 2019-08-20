@@ -5,15 +5,15 @@ metadata:
 spec:
   containers:
   - name: attach-pvc
-    image: armandmcqueen/tensorpack-mask-rcnn:master-latest
+    image: fewu/mask-rcnn-tensorflow:master-latest
     command: ["/bin/bash"]
     securityContext:
       privileged: true
     args: ["-c", "while true; do echo $(date -u) >> /data/out.txt; sleep 3600; done"]
     volumeMounts:
-    - name:  fsx
-      mountPath: /fsx
+    - name:  fsx # efs or fsx
+      mountPath: /fsx # /efs or /fsx
   volumes:
-  - name:  fsx
+  - name:  fsx # efs or fsx
     persistentVolumeClaim:
       claimName: tensorpack-fsx

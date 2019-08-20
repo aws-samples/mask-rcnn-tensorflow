@@ -47,7 +47,7 @@ $(aws ecr get-login --region ${region} --no-include-email)
 
 # Build the docker image locally with the image name and then push it to ECR
 # with the full name.
-echo "Building docker image tensorpack-mask-rcnn"
+echo "Building docker image mask-rcnn-tensorflow"
 echo ""
 
 docker build  -t ${image} -f Dockerfile_sm . --build-arg CACHEBUST=$(date +%s) \

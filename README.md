@@ -12,7 +12,7 @@ Training on N GPUs (V100s in our experiments) with a per-gpu batch size of M = N
 
 Training converges to target accuracy for configurations from 8x1 up to 32x4 training. Training throughput is substantially improved from original Tensorpack code.
 
-A pre-built dockerfile is available in DockerHub under `armandmcqueen/tensorpack-mask-rcnn:master-latest`. It is automatically built on each commit to master.
+A pre-built dockerfile is available in DockerHub under `fewu/mask-rcnn-tensorflow:master-latest`. It is automatically built on each commit to master.
 
 ### Notes
 
@@ -21,14 +21,32 @@ A pre-built dockerfile is available in DockerHub under `armandmcqueen/tensorpack
 
 ### To launch training
 - Data preprocessing
-  - Follow the [data preprocess](https://github.com/tensorpack/tensorpack/tree/master/examples/FasterRCNN)
-  - If you want to use EKS or Sagemaker, you need to create your own S3 bucket which contains the data, and change the S3 bucket name in the following files:
-    - EKS: [P3 config](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/eks/fsx/p3/stage-data.yaml), [P3dn config](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/eks/fsx/p3dn/stage-data.yaml)
-    - SageMaker: [S3 download](https://github.com/armandmcqueen/tensorpack-mask-rcnn/blob/master/infra/sm/run_mpi.py#L122)
+  - We are using COCO 2017, you can download the data from [COCO data](http://cocodataset.org/#download).
+  - The pre-trained resnet backbone can be donloaded from [ImageNet-R50-AlignPadding.npz](http://models.tensorpack.com/FasterRCNN/ImageNet-R50-AlignPadding.npz)
+  - The file folder needs to have the following directory structure:
+  ```
+  data/
+    annotations/
+      instances_train2017.json
+      instances_val2017.json
+    pretrained-models/
+      ImageNet-R50-AlignPadding.npz
+    train2017/
+      # image files that are mentioned in the corresponding json
+    val2017/
+      # image files that are mentioned in corresponding json
+  ```
+  - If you want to use COCO 2014, please refer to [here](https://github.com/tensorpack/tensorpack/tree/master/examples/FasterRCNN)
+  - If you want to use EKS or Sagemaker, you need to create your own S3 bucket which contains the data in the same directory structure, and change the S3 bucket name in the following files:
+    - EKS: [stage-data](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/eks/fsx/stage-data.yaml)
+    - SageMaker: [S3 download](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/sm/run_mpi.py#L122)
+  - If you want to use EKS, you also need to create the a FSx filesystem
+    - You don't need to link your S3 bucket if you have followed the previous steps
+    - You need to change the FSx filesystem id in [pv-fsx](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/eks/fsx/pv-fsx.yaml) file.
 - Container is recommended for training
-  - To train with docker, refer to [Docker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/docker)
-  - To train with Amazon EKS, refer to [EKS](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/eks)
-  - To train with Amazon SageMaker, refer to [SageMaker](https://github.com/armandmcqueen/tensorpack-mask-rcnn/tree/master/infra/sm)
+  - To train with docker, refer to [Docker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/docker)
+  - To train with Amazon EKS, refer to [EKS](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/eks)
+  - To train with Amazon SageMaker, refer to [SageMaker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/sm)
 
 ### Training results
 The result was running on P3dn.24xl instances using EKS.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-cd /opt/ml/code/tensorpack-mask-rcnn
+cd /opt/ml/code/mask-rcnn-tensorflow
 BATCH_SIZE_PER_GPU=4
 THROUGHPUT_LOG_FREQ=2000
 echo "Launch training job...."

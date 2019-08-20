@@ -6,10 +6,10 @@
 
 eksctl create cluster -f config.yaml --auto-kubeconfig
 
-export KUBECONFIG=/Users/ubuntu/.kube/eksctl/clusters/tensorpack-mask-rcnn-p3dn
+export KUBECONFIG=/Users/$USER/.kube/eksctl/clusters/mask-rcnn-tensorflow-p3dn
 # aws eks --region $AWS_REGION update-kubeconfig --name $EKS_CLUSTER
 
 kubectl create -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/1.0.0-beta/nvidia-device-plugin.yml
 
 
-# eksctl scale nodegroup --cluster=tensorpack-mask-rcnn --nodes=12 --name=ng-1
+# eksctl scale nodegroup --cluster=mask-rcnn-tensorflow --nodes=12 --name=ng-1

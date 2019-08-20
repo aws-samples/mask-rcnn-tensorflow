@@ -7,7 +7,7 @@ RUN apt-get install less
 RUN pip uninstall -y tensorflow tensorboard tensorflow-estimator keras h5py horovod numpy
 
 # Download and install custom Tensorflow binary
-RUN wget https://github.com/armandmcqueen/tensorpack-mask-rcnn/releases/download/v0.0.0-WIP/tensorflow-1.13.0-cp36-cp36m-linux_x86_64.whl && \
+RUN wget https://github.com/aws-samples/mask-rcnn-tensorflow/releases/download/v0.0.0/tensorflow-1.13.0-cp36-cp36m-linux_x86_64.whl && \
     pip install tensorflow-1.13.0-cp36-cp36m-linux_x86_64.whl && \
     pip install tensorflow-estimator==1.13.0 && \
     rm tensorflow-1.13.0-cp36-cp36m-linux_x86_64.whl
@@ -36,7 +36,7 @@ RUN pip install --ignore-installed numpy==1.16.2
 ARG CACHEBUST=1
 ARG BRANCH_NAME
 
-RUN git clone https://github.com/armandmcqueen/tensorpack-mask-rcnn -b $BRANCH_NAME
+RUN git clone https://github.com/aws-samples/mask-rcnn-tensorflow -b $BRANCH_NAME
 
-RUN chmod -R +w /tensorpack-mask-rcnn
-RUN pip install --ignore-installed -e /tensorpack-mask-rcnn/
+RUN chmod -R +w /mask-rcnn-tensorflow
+RUN pip install --ignore-installed -e /mask-rcnn-tensorflow/

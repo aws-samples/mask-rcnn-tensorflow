@@ -123,9 +123,9 @@ def train(hosts, current_host, num_gpus, custom_mpi_cmds):
     print("Loading data from s3......")
     subprocess.check_call("aws s3 cp s3://armand-ajay-workshop/mask-rcnn/sagemaker/input/train /opt/ml/code/data --recursive --quiet", shell=True)
     print("Loading data finsihed...Install tensorpack....")
-    subprocess.check_call("git clone https://github.com/armandmcqueen/tensorpack-mask-rcnn /opt/ml/code/tensorpack-mask-rcnn", shell=True)
-    subprocess.check_call("chmod -R +w /opt/ml/code/tensorpack-mask-rcnn", shell=True)
-    subprocess.check_call("pip install --ignore-installed -e /opt/ml/code/tensorpack-mask-rcnn/", shell=True)
+    subprocess.check_call("git clone https://github.com/aws-samples/mask-rcnn-tensorflow /opt/ml/code/mask-rcnn-tensorflow", shell=True)
+    subprocess.check_call("chmod -R +w /opt/ml/code/mask-rcnn-tensorflow", shell=True)
+    subprocess.check_call("pip install --ignore-installed -e /opt/ml/code/mask-rcnn-tensorflow/", shell=True)
     subprocess.check_call("chmod +x /opt/ml/code/run.sh", shell=True)
     print("Tensorpack install finished...")
 
