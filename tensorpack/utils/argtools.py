@@ -106,8 +106,8 @@ def shape2d(a):
     raise RuntimeError("Illegal shape: {}".format(a))
 
 
-def get_data_format(data_format, keras_mode=True):
-    if keras_mode:
+def get_data_format(data_format, tfmode=True):
+    if tfmode:
         dic = {'NCHW': 'channels_first', 'NHWC': 'channels_last'}
     else:
         dic = {'channels_first': 'NCHW', 'channels_last': 'NHWC'}
