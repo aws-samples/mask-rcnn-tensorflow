@@ -108,7 +108,7 @@ def kubex(c, cmd, pod="attach-pvc-2"):
 # inv repeat "kubectl exec attach-pvc-2 -- tail -40 /fsx/logs/correctlr/maskrcnn-32x4-correctlr-24epoch-run|N|/train_log/log.log | ./parse_logs - --output_type=csv"
 
 @task
-def collect_results(c, log_prefix, runs=5, verbose=False, extra_maskrcnn_dir=False):
+def collect_results(c, log_prefix, base_path="/Users/fewu/Documents/mask-rcnn-tensorflow/infra/eks", runs=5, verbose=False, extra_maskrcnn_dir=False):
     hide = not verbose
     csv_strings = []
     for i in range(1, runs+1):
@@ -123,6 +123,9 @@ def collect_results(c, log_prefix, runs=5, verbose=False, extra_maskrcnn_dir=Fal
                 print(f'Error in {log_path}. {str(e)}')
 
     print()
+    with open(f'{base_path}/result.csv', 'w+') as f:
+        for csv_line in csv_strings:
+            f.write(csv_line)
     cols = [[] for _ in csv_strings[0].split(",")]
     for csv_str in csv_strings:
         csv_str = csv_str.replace("\n", "")
