@@ -86,7 +86,7 @@ def Conv2D(
 
     else:
         # group conv implementation
-        data_format = get_data_format(data_format, tf_mode=False)
+        data_format = get_data_format(data_format, tfmode=False)
         in_shape = inputs.get_shape().as_list()
         channel_axis = 3 if data_format == 'NHWC' else 1
         in_channel = in_shape[channel_axis]
@@ -209,7 +209,7 @@ def Conv2DTranspose(
         # Our own implementation, to avoid Keras bugs. https://github.com/tensorflow/tensorflow/issues/25946
         assert kernel_regularizer is None and bias_regularizer is None and activity_regularizer is None, \
             "Unsupported arguments due to Keras bug in TensorFlow 1.13"
-        data_format = get_data_format(data_format, tf_mode=False)
+        data_format = get_data_format(data_format, tfmode=False)
         shape_dyn = tf.shape(inputs)
         strides2d = shape2d(strides)
         channels_in = inputs.shape[1 if data_format == 'NCHW' else 3]
