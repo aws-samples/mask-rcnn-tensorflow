@@ -73,6 +73,8 @@ class DetectionModel(ModelDesc):
 
 
         opt = tf.train.MomentumOptimizer(lr, 0.9)
+        loss_scale_manager = tf.contrib.mixed_precision.ExponentialUpdateLossScaleManager(init_loss_scale=2**32, incr_every_n_steps=1000, decr_every_n_nan_or_inf=2, decr_ratio=0.5)
+        opt = tf.contrib.mixed_precision.LossScaleOptimizer(opt, loss_scale_manager)
         #if cfg.TRAIN.NUM_GPUS < 8:
         #    opt = optimizer.AccumGradOptimizer(opt, 8 // cfg.TRAIN.NUM_GPUS)
         if cfg.TRAIN.GRADIENT_CLIP != 0:
