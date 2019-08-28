@@ -249,10 +249,10 @@ def Conv2DTranspose(
                               filters]
 
         kernel_shape = shape2d(kernel_size)
-        with tf.variable_scope(tf.get_variable_scope(),, custom_getter=float32_variable_storage_getter(dtype=tf.float16)):
+        with tf.variable_scope(tf.get_variable_scope(), custom_getter=float32_variable_storage_getter(dtype=tf.float16)):
             W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer)
         if use_bias:
-            with tf.variable_scope(tf.get_variable_scope(),, custom_getter=float32_variable_storage_getter(dtype=tf.float16)):
+            with tf.variable_scope(tf.get_variable_scope(), custom_getter=float32_variable_storage_getter(dtype=tf.float16)):
                 b = tf.get_variable('b', [filters], initializer=bias_initializer)
         conv = tf.nn.conv2d_transpose(
             inputs, W, out_shape_dyn,
