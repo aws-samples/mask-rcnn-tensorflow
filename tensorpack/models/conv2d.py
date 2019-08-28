@@ -67,6 +67,7 @@ def Conv2D(
     * ``W``: weights
     * ``b``: bias
     """
+    print(f"Use {data_format} data format")
     if kernel_initializer is None:
         if get_tf_version_tuple() <= (1, 12):
             kernel_initializer = tf.contrib.layers.variance_scaling_initializer(2.0, seed=seed)

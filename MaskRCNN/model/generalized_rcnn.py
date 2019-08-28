@@ -54,6 +54,11 @@ class GradientClipOptimizer(tf.train.Optimizer):
     def variables(self, *args, **kwargs):
         return self.opt.variables(*args, **kwargs)
 
+def nchw_to_nhwc_transform(input):
+    return tf.transpose(input, [0, 2, 3, 1])
+
+def nhwc_to_nchw_transform(input):
+    return tf.transpose(input, [0, 3, 1, 2])
 
 class DetectionModel(ModelDesc):
     def __init__(self, fp16):
@@ -152,7 +157,14 @@ class ResNetFPNModel(DetectionModel):
 
 
     def backbone(self, image, seed_gen):
-        c2345 = resnet_fpn_backbone(image, cfg.BACKBONE.RESNET_NUM_BLOCKS, seed_gen=seed_gen, fp16=self.fp16)
+        if not cfg.TRAIN.NCHW:
+            image = nchw_to_nhwc_transform(image)
+        _c2345 = resnet_fpn_backbone(cfg.TRAIN.NCHW, cfg.BACKBONE.RESNET_NUM_BLOCKS, seed_gen=seed_gen, fp16=self.fp16)
+        c2345 = None
+        if not cfg.TRAIN.NCHW:
+            c2345 = [nhwc_to_nchw_transform(c) for c in _c2345]
+        else:
+            c2345 =  _c2345
         print("c2345", c2345)
         p23456 = fpn_model('fpn', c2345, seed_gen=seed_gen, fp16=self.fp16)
         return p23456
