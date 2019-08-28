@@ -13,6 +13,21 @@ from .tflayer import convert_to_tflayer_args, rename_get_variable
 
 __all__ = ['Conv2D', 'Deconv2D', 'Conv2DTranspose']
 
+def float32_variable_storage_getter(getter, name, shape=None, dtype=None,
+                                    initializer=None, regularizer=None,
+                                    trainable=True,
+                                    *args, **kwargs):
+    """Custom variable getter that forces trainable variables to be stored in
+       float32 precision and then casts them to the training precision.
+    """
+    storage_dtype = tf.float32 if trainable else dtype
+    variable = getter(name, shape, dtype=storage_dtype,
+                      initializer=initializer, regularizer=regularizer,
+                      trainable=trainable,
+                      *args, **kwargs)
+    if trainable and dtype != tf.float32:
+        variable = tf.cast(variable, dtype)
+    return variable
 
 @layer_register(log_shape=True)
 @convert_to_tflayer_args(
@@ -234,9 +249,11 @@ def Conv2DTranspose(
                               filters]
 
         kernel_shape = shape2d(kernel_size)
-        W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer)
+        with tf.variable_scope(scope, custom_getter=float32_variable_storage_getter(dtype=tf.float16)):
+            W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer)
         if use_bias:
-            b = tf.get_variable('b', [filters], initializer=bias_initializer)
+            with tf.variable_scope(scope, custom_getter=float32_variable_storage_getter(dtype=tf.float16)):
+                b = tf.get_variable('b', [filters], initializer=bias_initializer)
         conv = tf.nn.conv2d_transpose(
             inputs, W, out_shape_dyn,
             shape4d(strides, data_format=data_format),
