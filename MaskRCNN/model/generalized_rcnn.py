@@ -159,7 +159,7 @@ class ResNetFPNModel(DetectionModel):
     def backbone(self, image, seed_gen):
         if not cfg.TRAIN.NCHW:
             image = nchw_to_nhwc_transform(image)
-        _c2345 = resnet_fpn_backbone(cfg.TRAIN.NCHW, cfg.BACKBONE.RESNET_NUM_BLOCKS, seed_gen=seed_gen, fp16=self.fp16)
+        _c2345 = resnet_fpn_backbone(image, cfg.BACKBONE.RESNET_NUM_BLOCKS, seed_gen=seed_gen, fp16=self.fp16)
         c2345 = None
         if not cfg.TRAIN.NCHW:
             c2345 = [nhwc_to_nchw_transform(c) for c in _c2345]
