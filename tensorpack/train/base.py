@@ -254,6 +254,11 @@ class Trainer(object):
         hooks = self._callbacks.get_hooks()
         self.hooked_sess = tf.train.MonitoredSession(
             session_creator=ReuseSessionCreator(self.sess), hooks=hooks)
+        graph_def = self.hooked_sess.graph.as_graph_def()
+        with open('graphdef.pb', 'wb') as f:
+          f.write(graph_def.SerializeToString())
+        with open('graphdef.pbtxt', 'w') as f:
+          f.write(str(graph_def))
 
     @call_only_once
     def main_loop(self, steps_per_epoch, starting_epoch, max_epoch):
