@@ -230,8 +230,8 @@ def resnet_fpn_backbone(image, num_blocks, seed_gen, fp16=False):
                 [pad_base[0], pad_base[1] + pad_shape2d[1]]])) if cfg.TRAIN.NCHW else tf.pad(image, tf.stack(
                 [[0, 0],
                 [pad_base[0], pad_base[1] + pad_shape2d[0]],
-                [pad_base[0], pad_base[1] + pad_shape2d[1]]],
-                [0, 0]))
+                [pad_base[0], pad_base[1] + pad_shape2d[1]],
+                [0, 0]]))
             if cfg.TRAIN.NCHW:
                 l.set_shape([None, chan, None, None])
             else:
