@@ -250,19 +250,19 @@ def Conv2DTranspose(
                               filters]
 
         kernel_shape = shape2d(kernel_size)
-        with tf.variable_scope(tf.get_variable_scope(), custom_getter=float32_variable_storage_getter):
-            W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer, dtype=tf.float16)
+        W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer, dtype=tf.float16)
         if use_bias:
             with tf.variable_scope(tf.get_variable_scope(), custom_getter=float32_variable_storage_getter):
                 b = tf.get_variable('b', [filters], initializer=bias_initializer, dtype=tf.float16)
-        conv = tf.nn.conv2d_transpose(
-            inputs, W, out_shape_dyn,
-            shape4d(strides, data_format=data_format),
-            padding=padding.upper(),
-            data_format=data_format)
-        conv.set_shape(tf.TensorShape([None] + out_shape3_sta))
+        with rename_get_variable({'kernel': 'W', 'bias': 'b'}):
+            conv = tf.nn.conv2d_transpose(
+                inputs, W, out_shape_dyn,
+                shape4d(strides, data_format=data_format),
+                padding=padding.upper(),
+                data_format=data_format)
+            conv.set_shape(tf.TensorShape([None] + out_shape3_sta))
 
-        ret = tf.nn.bias_add(conv, b, data_format=data_format) if use_bias else conv
+            ret = tf.nn.bias_add(conv, b, data_format=data_format) if use_bias else conv
         if activation is not None:
             ret = activation(ret)
         ret = tf.identity(ret, name='output')
