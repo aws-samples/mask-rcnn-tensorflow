@@ -263,9 +263,9 @@ def Conv2DTranspose(
             conv.set_shape(tf.TensorShape([None] + out_shape3_sta))
 
             ret = tf.nn.bias_add(conv, b, data_format=data_format) if use_bias else conv
-        if activation is not None:
-            ret = activation(ret)
-        ret = tf.identity(ret, name='output')
+            if activation is not None:
+                ret = activation(ret)
+            ret = tf.identity(ret, name='output')
 
         ret.variables = VariableHolder(W=W)
         if use_bias:
