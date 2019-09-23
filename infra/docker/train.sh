@@ -27,11 +27,11 @@ mpirun -np ${NUM_GPU} \
 -x NCCL_DEBUG=INFO \
 -x TENSORPACK_FP16=1 \
 -x TF_ENABLE_NHWC=1 \
--x AUTOGRAPH_VERBOSITY=10 \
+-x TF_CUDNN_USE_AUTOTUNE=0 \
 -x HOROVOD_CYCLE_TIME=0.5 \
 -x HOROVOD_FUSION_THRESHOLD=67108864 \
 --output-filename /logs/mpirun_logs \
-dlprof --in_graphdef=/logs/nvprof/graphdef.pb --output_path=/logs/nvprof/ --out_tb_dir=/logs/nvprof/ --out_summary_report_csv=out_summary_report_csv.csv --out_detail_report_csv=/logs/nvprof/out_detail_report_csv.csv --out_tensor_core_report_csv=/logs/nvprof/out_tensor_core_report_csv.csv  python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
+python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
 --logdir /logs/train_log \
 --fp16 \
 --throughput_log_freq ${THROUGHPUT_LOG_FREQ} \
@@ -43,7 +43,7 @@ TRAIN.BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU} \
 TRAIN.EVAL_PERIOD=12 \
 TRAIN.NCHW=False \
 RPN.TOPK_PER_IMAGE=True \
-PREPROC.PREDEFINED_PADDING=True \
+PREPROC.PREDEFINED_PADDING=False \
 BACKBONE.WEIGHTS=/data/pretrained-models/ImageNet-R50-AlignPadding.npz \
 BACKBONE.NORM=FreezeBN \
 TRAINER=horovod
