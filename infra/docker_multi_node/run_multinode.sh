@@ -1,7 +1,9 @@
 MASTER_HOST=${1:-"127.0.0.1"}
 BRANCH_NAME=${2:-"master"}
-HOSTS=${3:-"hosts"}
-HOSTS_SLOTS=${4:-"hosts_slots"}
+NUM_GPU=${3:-8}
+BS=${4:-4}
+HOSTS=${5:-"hosts"}
+HOSTS_SLOTS=${6:-"hosts_slots"}
 
 
 hosts=`cat $HOSTS`
