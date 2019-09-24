@@ -1,7 +1,10 @@
 MASTER_HOST=${1:-"127.0.0.1"}
-HOSTS=${2:-"hosts"}
-HOSTS_SLOTS=${2:-"hosts_slots"}
-BRANCH_NAME=${3:-"master"}
+BRANCH_NAME=${2:-"master"}
+HOSTS=${3:-"hosts"}
+HOSTS_SLOTS=${4:-"hosts_slots"}
+
+
+hosts=`cat $HOSTS`
 
 for host in $hosts; do
   if [ $host != $MASTER_HOST ]; then
