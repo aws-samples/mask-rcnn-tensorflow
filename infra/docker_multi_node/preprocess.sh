@@ -2,7 +2,7 @@ MASTER_HOST=${1:-"127.0.0.1"}
 HOSTS=${2:-"hosts"}
 BRANCH_NAME=${3:-"master"}
 
-ssh-keygen -q -t -y rsa -N '' -f ~/.ssh/id_rsa
+ssh-keygen -q -t rsa -N '' -f ~/.ssh/id_rsa
 hosts=`cat $HOSTS`
 for host in $hosts; do
   scp ~/.ssh/id_rsa.pub $host:~/.ssh/
