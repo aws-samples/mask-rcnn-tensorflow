@@ -4,6 +4,7 @@
 
 MASTER_HOST=${1:-"127.0.0.1"}
 HOSTS=${2:-"hosts"}
+HOSTS_SLOTS=${2:-"hosts_slots"}
 BRANCH_NAME=${3:-"master"}
 
 
@@ -19,5 +20,9 @@ for host in $hosts; do
   if [ $host != $MASTER_HOST ]; then
     ssh $host "git clone https://github.com/aws-samples/mask-rcnn-tensorflow.git -b ${BRANCH_NAME}"
   fi
-  ssh $host "cd ~/mask-rcnn-tensorflow/infra/docker; ./build.sh"
+  ssh $host "cd ~/mask-rcnn-tensorflow/infra/docker; ./build.sh ${BRANCH_NAME}"
+  if [ $host != $MASTER_HOST ]; then
+    ssh $host "nvidia-docker run --network=host -v /mnt/share/ssh:/root/.ssh -v ~/data:/data -v ~/logs:/logs mask-rcnn-tensorflow:dev-${BRANCH_NAME} /mask-rcnn-tensorflow/infra/docker/sleep.sh"
+  fi
 done
+nvidia-docker run --network=host -v /mnt/share/ssh:/root/.ssh -v ~/data:/data -v ~/logs:/logs mask-rcnn-tensorflow:dev-${BRANCH_NAME} "cp /data/${HOSTS_SLOTS} /mask-rcnn-tensorflow/infra/docker/hosts; cd /mask-rcnn-tensorflow/infra/docker/; ./train_multinode.sh $NUM_GPU $BS |& tee /logs/${NUM_GPU}x${BS}.log"
