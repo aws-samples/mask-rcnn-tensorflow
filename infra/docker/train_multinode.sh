@@ -16,7 +16,7 @@ echo ""
 
 
 
-/usr/local/bin/mpirun -np ${NUM_GPU} \
+mpirun -np ${NUM_GPU} \
 --hostfile hosts \
 --mca plm_rsh_no_tree_spawn 1 -bind-to none -map-by slot -mca pml ob1 -mca btl ^openib \
 -mca btl_tcp_if_exclude lo,docker0 \
@@ -27,11 +27,12 @@ echo ""
 -x NCCL_SOCKET_IFNAME=^docker0,lo \
 -x NCCL_MIN_NRINGS=8 \
 -x NCCL_DEBUG=INFO \
+-x TF_CUDNN_USE_AUTOTUNE=0 \
 -x TENSORPACK_FP16=1 \
 -x HOROVOD_CYCLE_TIME=0.5 \
 -x HOROVOD_FUSION_THRESHOLD=67108864 \
 --output-filename /logs/mpirun_logs \
-/usr/local/bin/python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
+python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
 --logdir /logs/train_log \
 --fp16 \
 --throughput_log_freq ${THROUGHPUT_LOG_FREQ} \
@@ -45,9 +46,11 @@ TRAIN.BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU} \
 TRAIN.LR_EPOCH_SCHEDULE='[(8, 0.1), (10, 0.01), (12, None)]' \
 TRAIN.EVAL_PERIOD=12 \
 RPN.TOPK_PER_IMAGE=True \
-PREPROC.PREDEFINED_PADDING=True \
+PREPROC.PREDEFINED_PADDING=False \
 BACKBONE.WEIGHTS=/data/pretrained-models/ImageNet-R50-AlignPadding.npz \
 BACKBONE.NORM=FreezeBN \
+TRAIN.WARMUP_INIT_LR=0.000416666666667 \
+FRCNN.BBOX_REG_WEIGHTS='[20., 20., 10., 10.]' \
 TRAINER=horovod
 #For 32x4
 #TRAIN.GRADIENT_CLIP=1.5
