@@ -18,6 +18,7 @@ echo ""
 
 mpirun -np ${NUM_GPU} \
 --hostfile hosts \
+--allow-run-as-root \
 --mca plm_rsh_no_tree_spawn 1 -bind-to none -map-by slot -mca pml ob1 -mca btl ^openib \
 -mca btl_tcp_if_exclude lo,docker0 \
 -mca btl_vader_single_copy_mechanism none \
@@ -27,6 +28,7 @@ mpirun -np ${NUM_GPU} \
 -x NCCL_SOCKET_IFNAME=^docker0,lo \
 -x NCCL_MIN_NRINGS=8 \
 -x NCCL_DEBUG=INFO \
+-x TF_CUDNN_USE_AUTOTUNE=0 \
 -x TENSORPACK_FP16=1 \
 -x TF_CUDNN_USE_AUTOTUNE=0 \
 -x NCCL_TREE_THRESHOLD=4294967296 \
