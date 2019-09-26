@@ -20,7 +20,6 @@ nvidia-docker run --network=host -v /mnt/share/ssh:/root/.ssh -v ~/data:/data -v
 for host in $hosts; do
   if [ $host != $MASTER_HOST ]; then
     echo "stop containers and screens..."
-    ssh $host "docker ps -q | xargs -r docker stop"
-    ssh $host "pkill screen"
+    ssh $host 'screen -L -d -m bash -c "docker ps -q | xargs -r docker stop; pkill screen"'
   fi
 done
