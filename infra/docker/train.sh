@@ -14,7 +14,7 @@ echo ""
 
 
 
-/usr/local/bin/mpirun -np ${NUM_GPU} \
+mpirun -np ${NUM_GPU} \
 --H localhost:${NUM_GPU} \
 --mca plm_rsh_no_tree_spawn 1 -bind-to none -map-by slot -mca pml ob1 -mca btl ^openib \
 -mca btl_tcp_if_exclude lo,docker0 \
@@ -30,7 +30,7 @@ echo ""
 -x HOROVOD_CYCLE_TIME=0.5 \
 -x HOROVOD_FUSION_THRESHOLD=67108864 \
 --output-filename /logs/mpirun_logs \
-/usr/local/bin/python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
+python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
 --logdir /logs/train_log \
 --fp16 \
 --throughput_log_freq ${THROUGHPUT_LOG_FREQ} \
