@@ -16,6 +16,7 @@ echo ""
 
 mpirun -np ${NUM_GPU} \
 --H localhost:${NUM_GPU} \
+--allow-run-as-root \
 --mca plm_rsh_no_tree_spawn 1 -bind-to none -map-by slot -mca pml ob1 -mca btl ^openib \
 -mca btl_tcp_if_exclude lo,docker0 \
 -mca btl_vader_single_copy_mechanism none \
