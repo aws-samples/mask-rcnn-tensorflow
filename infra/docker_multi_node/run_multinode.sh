@@ -3,8 +3,8 @@ IMAGE_NAME=${2:-"fewu/mask-rcnn-tensorflow:master-latest"}
 NUM_GPU=${3:-8}
 BS=${4:-4}
 JOB_NAME=${5:-"8x4-run1"}
-HOSTS=${5:-"hosts"}
-HOSTS_SLOTS=${6:-"hosts"}
+HOSTS=${6:-"hosts"}
+HOSTS_SLOTS=${7:-"hosts"}
 
 
 hosts=`cat $HOSTS`
