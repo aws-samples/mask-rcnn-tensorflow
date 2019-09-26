@@ -1,22 +1,15 @@
 ## To run on multi-node
 Make sure you have your data ready as in [Run with docker](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/docker.md#using-docker "Run with docker").
-### SSH settings and build container
+### SSH settings
 - ssh into your master node and clone the repo by `git clone https://github.com/aws-samples/mask-rcnn-tensorflow.git`
-- run `cd ~/mask-rcnn-tensorflow/infra/docker/`
+- run `cd ~/mask-rcnn-tensorflow/infra/docker_multi_node/`
 - create your hosts file without slots
-- run `./ssh_and_build.sh $YOUR_MASTER_IP $YOUR_HOST_FILE`, this will enable the passwordless ssh connection and build the container on each of the nodes
-### run container
-For each of the instances
-- run `cd ~/mask-rcnn-tensorflow/infra/docker/`
-- run the container by run `./run_multinode.sh`
-
+- run `./preprocess.sh $YOUR_MASTER_IP $YOUR_HOST_FILE`, this will enable the passwordless ssh connection and build the container on each of the nodes
+### Pull or build the container
+- To pull the image on every host, run `./pull_image.sh $HOSTFILE $IMAGE_NAME`
+- To build the image from scratch, run `./build_multi.sh $HOSTFILE $IMAGE_NAME $BRANCH`
 ### Launch training
-Inside the container:
-- On each host *apart from the primary* run the following in the container you started:
-  - run `cd mask-rcnn-tensorflow/infra/docker/`
-  - run `./sleep.sh`
-This will make those containers listen to the ssh connection from port 1234.
-- On primary host, `cd mask-rcnn-tensorflow/infra/docker`, create your hosts file, which contains all ips of your nodes (include the primary host). The format should be like:
+- Create your hosts file, which contains all ips of your nodes (include the primary host). The format should be like:
 ```
 127.0.0.1 slots=8
 127.0.0.2 slots=8
@@ -24,4 +17,8 @@ This will make those containers listen to the ssh connection from port 1234.
 127.0.0.4 slots=8
 ```
 This is 4 nodes, 8 GPUs per node.
-Launch training with running `./train_multinode.sh 32 4` for 32 GPUs and 4 images per GPU
+- Put your host file in `~/data` folder, the host file will be copied into container
+- Launch training with running `./run_multinode.sh $YOUR_MASTER_IP $YOUR_HOST_FILE $NUM_GPU $BS $JOB_NAME`
+### Stop training
+- If the training stop naturally, there is nothing need to do. The log will be in the `~/logs` folder
+- If you want to stop the training early, you should stop the container in a separate shell or in one other machine.
