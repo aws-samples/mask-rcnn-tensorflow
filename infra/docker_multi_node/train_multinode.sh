@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 #!/usr/bin/env bash
 NUM_GPU=${1:-1}
 BATCH_SIZE_PER_GPU=${2:-1}
