@@ -7,9 +7,10 @@ Make sure you have your data ready as in [Run with docker](https://github.com/aw
 - run `./preprocess.sh $YOUR_MASTER_IP $YOUR_HOST_FILE`, this will enable the passwordless ssh connection and build the container on each of the nodes
 ### Pull or build the container
 - To pull the image on every host, run `./pull_image.sh $HOSTFILE $IMAGE_NAME`
+  - Your docker image should have OpenSSH server installed
 - To build the image from scratch, run `./build_multi.sh $HOSTFILE $IMAGE_NAME $BRANCH`
 ### Launch training
-- Create your hosts file, which contains all ips of your nodes (include the primary host). The format should be like:
+- Create your hosts file with slots, which contains all ips of your nodes (include the primary host). The format should be like:
 ```
 127.0.0.1 slots=8
 127.0.0.2 slots=8
