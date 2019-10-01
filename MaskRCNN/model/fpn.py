@@ -65,8 +65,8 @@ def fpn_model(features, seed_gen, fp16=False):
                      for i, c in enumerate(lat_sum_5432[::-1])]
             if use_gn:
                 p2345 = [GroupNorm('gn_p{}'.format(i + 2), c) for i, c in enumerate(p2345)]
-            p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
-
+            #p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
+            p6 = tf.keras.layers.MaxPool2D(pool_size=1, strides=2, data_format='channels_first')(p2345[-1])
             if fp16:
                 return [tf.cast(l, tf.float32) for l in p2345] + [tf.cast(p6, tf.float32)]
 
