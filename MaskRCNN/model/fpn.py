@@ -45,30 +45,32 @@ def fpn_model(features, seed_gen, fp16=False):
         #     return x
 
     with mixed_precision_scope(mixed=fp16):
-      with argscope(Conv2D, data_format='channels_first',
+        with argscope(Conv2D, data_format='channels_first',
                   activation=tf.identity, use_bias=True,
-                  kernel_initializer=tf.variance_scaling_initializer(scale=1., seed=seed_gen.next())):
-        lat_2345 = [Conv2D('lateral_1x1_c{}'.format(i + 2), c, num_channel, 1, seed=seed_gen.next())
-                    for i, c in enumerate(features)]
-        if use_gn:
-            lat_2345 = [GroupNorm('gn_c{}'.format(i + 2), c) for i, c in enumerate(lat_2345)]
-        lat_sum_5432 = []
-        for idx, lat in enumerate(lat_2345[::-1]):
-            if idx == 0:
-                lat_sum_5432.append(lat)
-            else:
-                lat = lat + upsample2x('upsample_lat{}'.format(6 - idx), lat_sum_5432[-1])
-                lat_sum_5432.append(lat)
-        p2345 = [Conv2D('posthoc_3x3_p{}'.format(i + 2), c, num_channel, 3, seed=seed_gen.next())
-                 for i, c in enumerate(lat_sum_5432[::-1])]
-        if use_gn:
-            p2345 = [GroupNorm('gn_p{}'.format(i + 2), c) for i, c in enumerate(p2345)]
-        p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
+                  kernel_initializer=tf.glorot_normal_initializer(seed=1234)):
+                  #kernel_initializer=tf.variance_scaling_initializer(scale=1., seed=seed_gen.next())):
+            lat_2345 = [Conv2D('lateral_1x1_c{}'.format(i + 2), c, num_channel, 1, seed=seed_gen.next())
+                        for i, c in enumerate(features)]
+            if use_gn:
+                lat_2345 = [GroupNorm('gn_c{}'.format(i + 2), c) for i, c in enumerate(lat_2345)]
+            lat_sum_5432 = []
+            for idx, lat in enumerate(lat_2345[::-1]):
+                if idx == 0:
+                    lat_sum_5432.append(lat)
+                else:
+                    #lat = lat + upsample2x('upsample_lat{}'.format(6 - idx), lat_sum_5432[-1])
+                    lat = lat + tf.keras.layers.UpSampling2D(data_format='channels_first')(lat_sum_5432[-1])
+                    lat_sum_5432.append(lat)
+            p2345 = [Conv2D('posthoc_3x3_p{}'.format(i + 2), c, num_channel, 3, seed=seed_gen.next())
+                     for i, c in enumerate(lat_sum_5432[::-1])]
+            if use_gn:
+                p2345 = [GroupNorm('gn_p{}'.format(i + 2), c) for i, c in enumerate(p2345)]
+            p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
 
-        if fp16:
-            return [tf.cast(l, tf.float32) for l in p2345] + [tf.cast(p6, tf.float32)]
+            if fp16:
+                return [tf.cast(l, tf.float32) for l in p2345] + [tf.cast(p6, tf.float32)]
 
-        return p2345 + [p6]
+            return p2345 + [p6]
 
 @under_name_scope()
 def fpn_map_rois_to_levels(boxes):
