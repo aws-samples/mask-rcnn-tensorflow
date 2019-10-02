@@ -126,7 +126,7 @@ class COCODetection(object):
         """
         # ann_ids = self.coco.getAnnIds(imgIds=img['id'])
         # objs = self.coco.loadAnns(ann_ids)
-        objs = self.coco.imgToAnns[img['id']]  # equivalent but faster than the above two lines
+        objs = self.coco.imgToAnns[img['image_id']]  # equivalent but faster than the above two lines
 
         # clean-up boxes
         width = img['width']
