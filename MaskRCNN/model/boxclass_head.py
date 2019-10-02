@@ -32,13 +32,11 @@ def boxclass_outputs(feature, num_classes, seed_gen, class_agnostic_regression=F
     """
     classification = FullyConnected(
         'class', feature, num_classes,
-        kernel_initializer=tf.glorot_normal_initializer(seed=1234))
-        #kernel_initializer=tf.random_normal_initializer(stddev=0.01, seed=seed_gen.next()))
+        kernel_initializer=tf.random_normal_initializer(stddev=0.01, seed=seed_gen.next())) #kernel_initializer=tf.glorot_normal_initializer(seed=1234))
     num_classes_for_box = 1 if class_agnostic_regression else num_classes
     box_regression = FullyConnected(
         'box', feature, num_classes_for_box * 4,
-        kernel_initializer=tf.glorot_normal_initializer(seed=1234))
-        #kernel_initializer=tf.random_normal_initializer(stddev=0.001, seed=seed_gen.next()))
+        kernel_initializer=tf.random_normal_initializer(stddev=0.001, seed=seed_gen.next())) #kernel_initializer=tf.glorot_normal_initializer(seed=1234))
     box_regression = tf.reshape(box_regression, [-1, num_classes_for_box, 4], name='output_box')
     return classification, box_regression
 

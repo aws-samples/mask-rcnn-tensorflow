@@ -72,11 +72,10 @@ def maskrcnn_upXconv_head(feature, num_category, seed_gen, num_convs, norm=None,
     if fp16:
         l = tf.cast(l, tf.float16)
     with mixed_precision_scope(mixed=fp16):
-        with argscope([Conv2D, Conv2DTranspose], data_format='channels_first',
-                  kernel_initializer=tf.glorot_normal_initializer(seed=1234)):
-                  #kernel_initializer=tf.variance_scaling_initializer(
-                  #    scale=2.0, mode='fan_out', seed=seed_gen.next(),
-                  #    distribution='untruncated_normal' if get_tf_version_tuple() >= (1, 12) else 'normal')):
+        with argscope([Conv2D, Conv2DTranspose], data_format='channels_first', #kernel_initializer=tf.glorot_normal_initializer(seed=1234)):
+                  kernel_initializer=tf.variance_scaling_initializer(
+                      scale=2.0, mode='fan_out', seed=seed_gen.next(),
+                      distribution='untruncated_normal' if get_tf_version_tuple() >= (1, 12) else 'normal')):
             # c2's MSRAFill is fan_out
             for k in range(num_convs):
                 l = Conv2D('fcn{}'.format(k), l, cfg.MRCNN.HEAD_DIM, 3, activation=tf.nn.relu, seed=seed_gen.next())

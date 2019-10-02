@@ -73,10 +73,9 @@ def backbone_scope(freeze, data_format='channels_first'):
 
     with argscope([Conv2D, MaxPooling, BatchNorm], data_format=data_format), \
             argscope(Conv2D, use_bias=False, activation=nonlin,
-                     kernel_initializer=tf.glorot_normal_initializer(seed=1234)), \
+                     kernel_initializer=tf.variance_scaling_initializer(scale=2.0, mode='fan_out')), \
             ExitStack() as stack:
-        #kernel_initializer=tf.variance_scaling_initializer(
-        #                 scale=2.0, mode='fan_out')), \
+        # kernel_initializer=tf.glorot_normal_initializer(seed=1234)), \
         if cfg.BACKBONE.NORM in ['FreezeBN', 'SyncBN']:
             if freeze or cfg.BACKBONE.NORM == 'FreezeBN':
                 stack.enter_context(argscope(BatchNorm, training=False))

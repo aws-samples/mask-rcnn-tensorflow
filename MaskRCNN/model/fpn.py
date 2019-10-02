@@ -47,8 +47,7 @@ def fpn_model(features, seed_gen, fp16=False):
     with mixed_precision_scope(mixed=fp16):
         with argscope(Conv2D, data_format='channels_first',
                   activation=tf.identity, use_bias=True,
-                  kernel_initializer=tf.glorot_normal_initializer(seed=1234)):
-                  #kernel_initializer=tf.variance_scaling_initializer(scale=1., seed=seed_gen.next())):
+                  kernel_initializer=tf.variance_scaling_initializer(scale=1., seed=seed_gen.next())): #kernel_initializer=tf.glorot_normal_initializer(seed=1234)):
             lat_2345 = [Conv2D('lateral_1x1_c{}'.format(i + 2), c, num_channel, 1, seed=seed_gen.next())
                         for i, c in enumerate(features)]
             if use_gn:
