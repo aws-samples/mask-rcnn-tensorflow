@@ -447,7 +447,7 @@ class HorovodTrainer(SingleCostTrainer):
         ).set_chief_only(False)
         return [cb]
 
-     def broadcast(self, _):
+    def broadcast(self, _):
         logger.info("Running broadcast ...")
         # the op will be created in initialize()
         self.sess.run(self._broadcast_op)
