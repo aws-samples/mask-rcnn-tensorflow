@@ -797,7 +797,7 @@ def get_batched_eval_dataflow(name, shard=0, num_shards=1, batch_size=1):
     img_range = (shard * img_per_shard, (shard + 1) * img_per_shard if shard + 1 < num_shards else num_imgs)
 
     # no filter for training
-    ds = DataFromListOfDictBatched(roidbs[img_range[0]: img_range[1]], ['file_name', 'image_id'], batch_size)
+    ds = DataFromListOfDictBatched(roidbs[img_range[0]: img_range[1]], ['file_name', 'id'], batch_size)
 
     def decode_images(inputs):
         return [[cv2.imread(inp[0], cv2.IMREAD_COLOR), inp[1]] for inp in inputs]
