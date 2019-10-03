@@ -380,7 +380,7 @@ class HorovodTrainer(SingleCostTrainer):
             certain numerical issues in practice.
     """
 
-    BROADCAST_EVERY_EPOCH = True
+    BROADCAST_EVERY_EPOCH = False
 
     def __init__(self, average=True, compression=None):
         """
@@ -458,7 +458,7 @@ class HorovodTrainer(SingleCostTrainer):
         # "right before" the graph is finalized,
         # because it needs to capture all the variables (which may be created by callbacks).
         with tf.name_scope('horovod_broadcast'):
-            self._broadcast_op = hvd.broadcast_global_variables(0)
+            self._broadcast_op = self.hvd.broadcast_global_variables(0)
 
         # it's important that our NewSessionCreator does not finalize the graph
         if not isinstance(session_creator, NewSessionCreator):
@@ -468,7 +468,7 @@ class HorovodTrainer(SingleCostTrainer):
         # https://github.com/tensorflow/tensorflow/issues/8136
         session_creator.config.gpu_options.visible_device_list = str(self._local_rank)
         try:
-            session_creator.config.inter_op_parallelism_threads = mp.cpu_count() // hvd.local_size()
+            session_creator.config.inter_op_parallelism_threads = mp.cpu_count() // self.hvd.local_size()
         except AttributeError:  # old horovod does not have local_size
             pass
         super(HorovodTrainer, self).initialize(session_creator, session_init)
@@ -483,7 +483,3 @@ class HorovodTrainer(SingleCostTrainer):
         else:
             logger.info("Rank {} waiting for initialization broadcasting ...".format(self._rank))
         self.sess.run(self._broadcast_op)
-
-
-# for lazy import
-hvd = None
