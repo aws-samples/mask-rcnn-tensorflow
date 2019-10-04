@@ -190,7 +190,7 @@ def roi_align(featuremap, boxes, resolution):
         NxCx res x res
     """
     # sample 4 locations per roi bin
-    ret = crop_and_resize(
+    ret = tf.image.crop_and_resize(
         featuremap, boxes,
         tf.zeros([tf.shape(boxes)[0]], dtype=tf.int32),
         resolution * 2)
