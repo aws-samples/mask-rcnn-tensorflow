@@ -23,9 +23,19 @@ def maskrcnn_loss(mask_logits, fg_labels, fg_target_masks):
         fg_target_masks: Num_fg_boxes x H_roi x W_roi, float32
     Returns: mask loss
     """
-    num_fg = tf.size(fg_labels, out_type=tf.int64) # scalar Num_fg_boxes
+    '''num_fg = tf.size(fg_labels, out_type=tf.int64) # scalar Num_fg_boxes
     indices = tf.stack([tf.range(num_fg), fg_labels - 1], axis=1)  # Num_fg_boxes x 2
     mask_logits = tf.gather_nd(mask_logits, indices)  # Num_fg_boxes x H_roi x W_roi
+    mask_probs = tf.sigmoid(mask_logits)'''
+    if get_tf_version_tuple() >= (1, 14):
+        mask_logits = tf.gather(
+            mask_logits, tf.reshape(fg_labels - 1, [-1, 1]), batch_dims=1)
+    else:
+        indices = tf.stack([tf.range(tf.size(fg_labels, out_type=tf.int64)),
+                            fg_labels - 1], axis=1)  # #fgx2
+        mask_logits = tf.gather_nd(mask_logits, indices)  # #fg x h x w
+
+    mask_logits = tf.squeeze(mask_logits, axis=1)
     mask_probs = tf.sigmoid(mask_logits)
 
     # add some training visualizations to tensorboard
