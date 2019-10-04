@@ -61,8 +61,8 @@ def fpn_model(features, seed_gen, fp16=False):
                 if idx == 0:
                     lat_sum_5432.append(lat)
                 else:
-                    #lat = lat + upsample2x('upsample_lat{}'.format(6 - idx), lat_sum_5432[-1])
-                    lat = lat + tf.keras.layers.UpSampling2D(data_format='channels_first')(lat_sum_5432[-1])
+                    lat = lat + upsample2x('upsample_lat{}'.format(6 - idx), lat_sum_5432[-1])
+                    #lat = lat + tf.keras.layers.UpSampling2D(data_format='channels_first')(lat_sum_5432[-1])
                     lat_sum_5432.append(lat)
             p2345 = [Conv2D('posthoc_3x3_p{}'.format(i + 2), c, num_channel, 3, seed=seed_gen.next())
                      for i, c in enumerate(lat_sum_5432[::-1])]
