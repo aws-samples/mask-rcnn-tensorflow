@@ -190,7 +190,7 @@ _C.FRCNN.FG_RATIO = 0.25  # fg ratio in a ROI batch
 _C.FPN.ANCHOR_STRIDES = (4, 8, 16, 32, 64)  # strides for each FPN level. Must be the same length as ANCHOR_SIZES
 _C.FPN.PROPOSAL_MODE = 'Level'  # 'Level', 'Joint'
 _C.FPN.NUM_CHANNEL = 256
-_C.FPN.NORM = 'GN'  # 'None', 'GN'
+_C.FPN.NORM = 'None'  # 'None', 'GN'
 # The head option is only used in FPN. For C4 models, the head is C5
 _C.FPN.BOXCLASS_HEAD_FUNC = 'boxclass_2fc_head'
 # choices: boxclass_2fc_head, boxclass_4conv1fc_{,gn_}head

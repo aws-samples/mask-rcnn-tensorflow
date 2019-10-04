@@ -118,6 +118,27 @@ def fpn_map_rois_to_levels(boxes):
     level_boxes = [tf.gather(boxes, ids) for ids in level_ids]
     return level_ids, level_boxes
 
+@under_name_scope()
+def roi_align(featuremap, boxes, resolution):
+    """
+    Args:
+        featuremap: 1xCxHxW
+        boxes: Nx4 floatbox
+        resolution: output spatial resolution
+    Returns:
+        NxCx res x res
+    """
+    # sample 4 locations per roi bin
+    ret = crop_and_resize(
+        featuremap, boxes,
+        tf.zeros([tf.shape(boxes)[0]], dtype=tf.int32),
+        resolution * 2)
+    try:
+        avgpool = tf.nn.avg_pool2d
+    except AttributeError:
+        avgpool = tf.nn.avg_pool
+    ret = avgpool(ret, [1, 1, 2, 2], [1, 1, 2, 2], padding='SAME', data_format='NCHW')
+    return ret
 
 @under_name_scope()
 def multilevel_roi_align(features, rcnn_boxes, resolution):
@@ -142,12 +163,13 @@ def multilevel_roi_align(features, rcnn_boxes, resolution):
             boxes = tf.concat((boxes[:,:1], boxes[:,1:] - 0.5*cfg.FPN.ANCHOR_STRIDES[i]), axis=1)
 
             # This is a custom tensorflow op for doing ROI align. See CODEBASE.md for more info
-            roi_feature_maps = tf.roi_align(featuremap,
-                                            boxes,
-                                            pooled_height=resolution,
-                                            pooled_width=resolution,
-                                            spatial_scale=1.0 / cfg.FPN.ANCHOR_STRIDES[i],
-                                            sampling_ratio=2)
+            #roi_feature_maps = tf.roi_align(featuremap,
+            #                                boxes,
+            #                                pooled_height=resolution,
+            #                                pooled_width=resolution,
+            #                                spatial_scale=1.0 / cfg.FPN.ANCHOR_STRIDES[i],
+            #                                sampling_ratio=2)
+            roi_feature_maps = roi_align(featuremap, boxes, resolution)
             all_rois.append(roi_feature_maps)
 
     # this can fail if using TF<=1.8 with MKL build
