@@ -55,7 +55,11 @@ def fpn_model(features, seed_gen, fp16=False):
             #                                   kernel_initializer=tf.keras.initializers.glorot_normal(seed=1234),
             #                                   kernel_size=1)(c) for i,c in enumerate(features)]
             if use_gn:
+                if fp16:
+                    lat_2345 = [tf.cast(i, tf.float32) for i in lat_2345]
                 lat_2345 = [GroupNorm('gn_c{}'.format(i + 2), c) for i, c in enumerate(lat_2345)]
+                if fp16:
+                    lat_2345 = [tf.cast(i, tf.float16) for i in lat_2345]
             lat_sum_5432 = []
             for idx, lat in enumerate(lat_2345[::-1]):
                 if idx == 0:
@@ -67,7 +71,11 @@ def fpn_model(features, seed_gen, fp16=False):
             p2345 = [Conv2D('posthoc_3x3_p{}'.format(i + 2), c, num_channel, 3, seed=seed_gen.next())
                      for i, c in enumerate(lat_sum_5432[::-1])]
             if use_gn:
+                if fp16:
+                    p2345 = [tf.cast(i, tf.float32) for i in p2345]
                 p2345 = [GroupNorm('gn_p{}'.format(i + 2), c) for i, c in enumerate(p2345)]
+                if fp16:
+                    p2345 = [tf.cast(i, tf.float16) for i in p2345]
             #p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
             p6 = tf.keras.layers.MaxPool2D(pool_size=1, strides=2, data_format='channels_first')(p2345[-1])
             if fp16:
