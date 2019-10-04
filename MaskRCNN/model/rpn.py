@@ -39,9 +39,9 @@ def rpn_head(featuremap, channel, num_anchors, seed_gen, fp16=False):
     with mixed_precision_scope(mixed=fp16):
         with argscope(Conv2D, data_format='channels_first',
                       kernel_initializer=tf.random_normal_initializer(stddev=0.01, seed=seed_gen.next())):
-            # hidden = Conv2D('conv0', featuremap, channel, 3, activation=tf.nn.relu, seed=seed_gen.next())
-            hidden = tf.layers.Conv2D(filters=channel, kernel_size=3, activation=tf.keras.activations.relu, data_format='channels_first',
-                                            kernel_initializer=tf.keras.initializers.glorot_normal(seed=1234))(featuremap)
+            hidden = Conv2D('conv0', featuremap, channel, 3, activation=tf.nn.relu, seed=seed_gen.next())
+            #hidden = tf.layers.Conv2D(filters=channel, kernel_size=3, activation=tf.keras.activations.relu, data_format='channels_first',
+            #                                kernel_initializer=tf.keras.initializers.glorot_normal(seed=1234))(featuremap)
             # BS x NumChannel x H_feature x W_feature
             label_logits = Conv2D('class', hidden, num_anchors, 1, seed=seed_gen.next())
             # BS x NA x H_feature x W_feature
