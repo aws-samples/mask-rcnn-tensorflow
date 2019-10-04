@@ -48,12 +48,12 @@ def fpn_model(features, seed_gen, fp16=False):
         with argscope(Conv2D, data_format='channels_first',
                   activation=tf.identity, use_bias=True,
                   kernel_initializer=tf.variance_scaling_initializer(scale=1., seed=seed_gen.next())): #kernel_initializer=tf.glorot_normal_initializer(seed=1234)):
-            #lat_2345 = [Conv2D('lateral_1x1_c{}'.format(i + 2), c, num_channel, 1, seed=seed_gen.next())
-            #            for i, c in enumerate(features)]
-            lat_2345 = [tf.keras.layers.Conv2D(filters=num_channel, activation=tf.identity,
-                                               use_bias=True, data_format='channels_first',
-                                               kernel_initializer=tf.keras.initializers.glorot_normal(seed=1234),
-                                               kernel_size=1)(c) for i,c in enumerate(features)]
+            lat_2345 = [Conv2D('lateral_1x1_c{}'.format(i + 2), c, num_channel, 1, seed=seed_gen.next())
+                        for i, c in enumerate(features)]
+            #lat_2345 = [tf.keras.layers.Conv2D(filters=num_channel, activation=tf.identity,
+            #                                   use_bias=True, data_format='channels_first',
+            #                                   kernel_initializer=tf.keras.initializers.glorot_normal(seed=1234),
+            #                                   kernel_size=1)(c) for i,c in enumerate(features)]
             if use_gn:
                 lat_2345 = [GroupNorm('gn_c{}'.format(i + 2), c) for i, c in enumerate(lat_2345)]
             lat_sum_5432 = []
