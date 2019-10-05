@@ -11,6 +11,7 @@ from tensorpack.tfutils.argscope import argscope
 from tensorpack.tfutils.scope_utils import under_name_scope
 from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.tfutils.tower import get_current_tower_context
+from tensorpack.utils.argtools import memoized
 
 from model.backbone import GroupNorm
 from config import config as cfg
