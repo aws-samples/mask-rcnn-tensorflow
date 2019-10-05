@@ -203,6 +203,8 @@ class ResNetFPNModel(DetectionModel):
             proposal_boxes, proposal_scores = generate_fpn_proposals_det(multilevel_box_logits,
                                                                          multilevel_label_logits,
                                                                          image_shape2d)
+            print(proposal_boxes)
+            print(proposal_scores)
         else:
             if cfg.RPN.TOPK_PER_IMAGE:
                 proposal_boxes, proposal_scores = generate_fpn_proposals_topk_per_image(all_anchors_fpn,
