@@ -10,11 +10,13 @@ from tensorpack.models import Conv2D, FixedUnPooling, MaxPooling, layer_register
 from tensorpack.tfutils.argscope import argscope
 from tensorpack.tfutils.scope_utils import under_name_scope
 from tensorpack.tfutils.summary import add_moving_summary
+from tensorpack.tfutils.tower import get_current_tower_context
 
 from model.backbone import GroupNorm
 from config import config as cfg
 from utils.box_ops import area as tf_area
 from utils.mixed_precision import mixed_precision_scope
+from .model_rpn import generate_rpn_proposals, rpn_losses, get_all_anchors
 
 @layer_register(log_shape=True)
 def fpn_model(features, seed_gen, fp16=False):
@@ -76,8 +78,8 @@ def fpn_model(features, seed_gen, fp16=False):
                 p2345 = [GroupNorm('gn_p{}'.format(i + 2), c) for i, c in enumerate(p2345)]
                 if fp16:
                     p2345 = [tf.cast(i, tf.float16) for i in p2345]
-            #p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
-            p6 = tf.keras.layers.MaxPool2D(pool_size=1, strides=2, data_format='channels_first')(p2345[-1])
+            p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
+            #p6 = tf.keras.layers.MaxPool2D(pool_size=1, strides=2, data_format='channels_first')(p2345[-1])
             if fp16:
                 return [tf.cast(l, tf.float32) for l in p2345] + [tf.cast(p6, tf.float32)]
 
@@ -119,90 +121,7 @@ def fpn_map_rois_to_levels(boxes):
     return level_ids, level_boxes
 
 @under_name_scope()
-def crop_and_resize(image, boxes, box_ind, crop_size, pad_border=True):
-    """
-    Aligned version of tf.image.crop_and_resize, following our definition of floating point boxes.
-    Args:
-        image: NCHW
-        boxes: nx4, x1y1x2y2
-        box_ind: (n,)
-        crop_size (int):
-    Returns:
-        n,C,size,size
-    """
-    assert isinstance(crop_size, int), crop_size
-    boxes = tf.stop_gradient(boxes)
-
-    # TF's crop_and_resize produces zeros on border
-    if pad_border:
-        # this can be quite slow
-        image = tf.pad(image, [[0, 0], [0, 0], [1, 1], [1, 1]], mode='SYMMETRIC')
-        boxes = boxes + 1
-
-    @under_name_scope()
-    def transform_fpcoor_for_tf(boxes, image_shape, crop_shape):
-        """
-        The way tf.image.crop_and_resize works (with normalized box):
-        Initial point (the value of output[0]): x0_box * (W_img - 1)
-        Spacing: w_box * (W_img - 1) / (W_crop - 1)
-        Use the above grid to bilinear sample.
-        However, what we want is (with fpcoor box):
-        Spacing: w_box / W_crop
-        Initial point: x0_box + spacing/2 - 0.5
-        (-0.5 because bilinear sample (in my definition) assumes floating point coordinate
-         (0.0, 0.0) is the same as pixel value (0, 0))
-        This function transform fpcoor boxes to a format to be used by tf.image.crop_and_resize
-        Returns:
-            y1x1y2x2
-        """
-        x0, y0, x1, y1 = tf.split(boxes, 4, axis=1)
-
-        spacing_w = (x1 - x0) / tf.cast(crop_shape[1], tf.float32)
-        spacing_h = (y1 - y0) / tf.cast(crop_shape[0], tf.float32)
-
-        imshape = [tf.cast(image_shape[0] - 1, tf.float32), tf.cast(image_shape[1] - 1, tf.float32)]
-        nx0 = (x0 + spacing_w / 2 - 0.5) / imshape[1]
-        ny0 = (y0 + spacing_h / 2 - 0.5) / imshape[0]
-
-        nw = spacing_w * tf.cast(crop_shape[1] - 1, tf.float32) / imshape[1]
-        nh = spacing_h * tf.cast(crop_shape[0] - 1, tf.float32) / imshape[0]
-
-        return tf.concat([ny0, nx0, ny0 + nh, nx0 + nw], axis=1)
-
-    image_shape = tf.shape(image)[2:]
-
-    boxes = transform_fpcoor_for_tf(boxes, image_shape, [crop_size, crop_size])
-    image = tf.transpose(image, [0, 2, 3, 1])   # nhwc
-    ret = tf.image.crop_and_resize(
-        image, boxes, tf.cast(box_ind, tf.int32),
-        crop_size=[crop_size, crop_size])
-    ret = tf.transpose(ret, [0, 3, 1, 2])   # ncss
-    return ret
-
-@under_name_scope()
-def roi_align(featuremap, boxes, resolution):
-    """
-    Args:
-        featuremap: 1xCxHxW
-        boxes: Nx4 floatbox
-        resolution: output spatial resolution
-    Returns:
-        NxCx res x res
-    """
-    # sample 4 locations per roi bin
-    ret = tf.image.crop_and_resize(
-        featuremap, boxes,
-        tf.zeros([tf.shape(boxes)[0]], dtype=tf.int32),
-        resolution * 2)
-    try:
-        avgpool = tf.nn.avg_pool2d
-    except AttributeError:
-        avgpool = tf.nn.avg_pool
-    ret = avgpool(ret, [1, 1, 2, 2], [1, 1, 2, 2], padding='SAME', data_format='NCHW')
-    return ret
-
-@under_name_scope()
-def multilevel_roi_align(features, rcnn_boxes, resolution):
+def multilevel_roi_align(features, rcnn_boxes, resolution, deterministic=False):
     """
     Args:
         features ([tf.Tensor]): 4 FPN feature level P2-5, each with BS X NumChannel X H_feature X W_feature
@@ -224,14 +143,16 @@ def multilevel_roi_align(features, rcnn_boxes, resolution):
             boxes = tf.concat((boxes[:,:1], boxes[:,1:] - 0.5*cfg.FPN.ANCHOR_STRIDES[i]), axis=1)
 
             # This is a custom tensorflow op for doing ROI align. See CODEBASE.md for more info
-            #roi_feature_maps = tf.roi_align(featuremap,
-            #                                boxes,
-            #                                pooled_height=resolution,
-            #                                pooled_width=resolution,
-            #                                spatial_scale=1.0 / cfg.FPN.ANCHOR_STRIDES[i],
-            #                                sampling_ratio=2)
-            roi_feature_maps = roi_align(featuremap, boxes, resolution)
-            all_rois.append(roi_feature_maps)
+            if deterministic:
+                all_rois.append(roi_align(featuremap, boxes, resolution))
+            else:
+                roi_feature_maps = tf.roi_align(featuremap,
+                                                boxes,
+                                                pooled_height=resolution,
+                                                pooled_width=resolution,
+                                                spatial_scale=1.0 / cfg.FPN.ANCHOR_STRIDES[i],
+                                                sampling_ratio=2)
+                all_rois.append(roi_feature_maps)
 
     # this can fail if using TF<=1.8 with MKL build
     all_rois = tf.concat(all_rois, axis=0)  # NCHW
@@ -240,3 +161,72 @@ def multilevel_roi_align(features, rcnn_boxes, resolution):
     level_id_invert_perm = tf.invert_permutation(level_id_perm)
     all_rois = tf.gather(all_rois, level_id_invert_perm)
     return all_rois
+
+@under_name_scope()
+def generate_fpn_proposals_det(
+        multilevel_pred_boxes, multilevel_label_logits, image_shape2d):
+    """
+    Args:
+        multilevel_pred_boxes: #lvl HxWxAx4 boxes
+        multilevel_label_logits: #lvl tensors of shape HxWxA
+    Returns:
+        boxes: kx4 float
+        scores: k logits
+    """
+    num_lvl = len(cfg.FPN.ANCHOR_STRIDES)
+    assert len(multilevel_pred_boxes) == num_lvl
+    assert len(multilevel_label_logits) == num_lvl
+
+    training = get_current_tower_context().is_training
+    all_boxes = []
+    all_scores = []
+    if cfg.FPN.PROPOSAL_MODE == 'Level':
+        fpn_nms_topk = cfg.RPN.TRAIN_PER_LEVEL_NMS_TOPK if training else cfg.RPN.TEST_PER_LEVEL_NMS_TOPK
+        for lvl in range(num_lvl):
+            with tf.name_scope('Lvl{}'.format(lvl + 2)):
+                pred_boxes_decoded = multilevel_pred_boxes[lvl]
+
+                proposal_boxes, proposal_scores = generate_rpn_proposals(
+                    tf.reshape(pred_boxes_decoded, [-1, 4]),
+                    tf.reshape(multilevel_label_logits[lvl], [-1]),
+                    image_shape2d, fpn_nms_topk)
+                all_boxes.append(proposal_boxes)
+                all_scores.append(proposal_scores)
+
+        proposal_boxes = tf.concat(all_boxes, axis=0)  # nx4
+        proposal_scores = tf.concat(all_scores, axis=0)  # n
+        # Here we are different from Detectron.
+        # Detectron picks top-k within the batch, rather than within an image. However we do not have a batch.
+        proposal_topk = tf.minimum(tf.size(proposal_scores), fpn_nms_topk)
+        proposal_scores, topk_indices = tf.nn.top_k(proposal_scores, k=proposal_topk, sorted=False)
+        proposal_boxes = tf.gather(proposal_boxes, topk_indices, name="all_proposals")
+    else:
+        for lvl in range(num_lvl):
+            with tf.name_scope('Lvl{}'.format(lvl + 2)):
+                pred_boxes_decoded = multilevel_pred_boxes[lvl]
+                all_boxes.append(tf.reshape(pred_boxes_decoded, [-1, 4]))
+                all_scores.append(tf.reshape(multilevel_label_logits[lvl], [-1]))
+        all_boxes = tf.concat(all_boxes, axis=0)
+        all_scores = tf.concat(all_scores, axis=0)
+        proposal_boxes, proposal_scores = generate_rpn_proposals(
+            all_boxes, all_scores, image_shape2d,
+            cfg.RPN.TRAIN_PRE_NMS_TOPK if training else cfg.RPN.TEST_PRE_NMS_TOPK,
+            cfg.RPN.TRAIN_POST_NMS_TOPK if training else cfg.RPN.TEST_POST_NMS_TOPK)
+
+    tf.sigmoid(proposal_scores, name='probs')  # for visualization
+    return tf.stop_gradient(proposal_boxes, name='boxes'), \
+        tf.stop_gradient(proposal_scores, name='scores')
+
+
+@memoized
+def get_all_anchors_fpn(*, strides, sizes, ratios, max_size):
+    """
+    Returns:
+        [anchors]: each anchors is a SxSx NUM_ANCHOR_RATIOS x4 array.
+    """
+    assert len(strides) == len(sizes)
+    foas = []
+    for stride, size in zip(strides, sizes):
+        foa = get_all_anchors(stride=stride, sizes=(size,), ratios=ratios, max_size=max_size)
+        foas.append(foa)
+    return foas

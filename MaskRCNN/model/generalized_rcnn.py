@@ -14,7 +14,7 @@ from model.backbone import image_preprocess, resnet_fpn_backbone
 from config import config as cfg
 from data import get_all_anchors_fpn
 from model_box import RPNAnchors, clip_boxes_batch, crop_and_resize
-from model.fpn import fpn_model, multilevel_roi_align
+from model.fpn import fpn_model, multilevel_roi_align, generate_fpn_proposals_det
 from model.boxclass_head import boxclass_predictions, boxclass_outputs, BoxClassHead
 from model.biased_sampler import sample_fast_rcnn_targets
 from model.mask_head import maskrcnn_loss
@@ -170,7 +170,7 @@ class ResNetFPNModel(DetectionModel):
         return p23456
 
 
-    def rpn(self, image, features, inputs, orig_image_dims, seed_gen):
+    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=False):
         """
         The RPN part of the graph that generate the RPN proposal and losses
 
@@ -199,19 +199,24 @@ class ResNetFPNModel(DetectionModel):
         multilevel_box_logits = [k[1] for k in rpn_outputs] # Num_level * [BS x (NA * 4) x H_feature x W_feature]
 
         # proposal_boxes: K x 5, proposal_scores: 1-D K
-        if cfg.RPN.TOPK_PER_IMAGE:
-            proposal_boxes, proposal_scores = generate_fpn_proposals_topk_per_image(all_anchors_fpn,
-                                                                                    multilevel_box_logits,
-                                                                                    multilevel_label_logits,
-                                                                                    image_shape2d,
-                                                                                    cfg.TRAIN.BATCH_SIZE_PER_GPU)
+        if deterministic:
+            proposal_boxes, proposal_scores = generate_fpn_proposals_det(multilevel_box_logits,
+                                                                         multilevel_label_logits,
+                                                                         image_shape2d)
         else:
+            if cfg.RPN.TOPK_PER_IMAGE:
+                proposal_boxes, proposal_scores = generate_fpn_proposals_topk_per_image(all_anchors_fpn,
+                                                                                        multilevel_box_logits,
+                                                                                        multilevel_label_logits,
+                                                                                        image_shape2d,
+                                                                                        cfg.TRAIN.BATCH_SIZE_PER_GPU)
+            else:
 
-            proposal_boxes, proposal_scores = generate_fpn_proposals(all_anchors_fpn,
-                                                                     multilevel_box_logits,
-                                                                     multilevel_label_logits,
-                                                                     image_shape2d,
-                                                                     cfg.TRAIN.BATCH_SIZE_PER_GPU)
+                proposal_boxes, proposal_scores = generate_fpn_proposals(all_anchors_fpn,
+                                                                         multilevel_box_logits,
+                                                                         multilevel_label_logits,
+                                                                         image_shape2d,
+                                                                         cfg.TRAIN.BATCH_SIZE_PER_GPU)
         if self.training:
 
             multilevel_anchor_labels = [inputs['anchor_labels_lvl{}'.format(i + 2)] for i in range(len(all_anchors_fpn))]

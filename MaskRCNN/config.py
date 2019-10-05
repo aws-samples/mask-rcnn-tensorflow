@@ -134,6 +134,7 @@ _C.TRAIN.BATCH_SIZE_PER_GPU = 1
 _C.TRAIN.SEED = 1234
 _C.TRAIN.GRADIENT_CLIP = 0 # set non-zero value to enable gradient clip, 0.36 is recommended for 32x4
 _C.TRAIN.NCHW = True # use nhwc input or nchw
+_C.TRAIN.DETERMINISTIC = False # set true to disable custom ops
 
 # preprocessing --------------------
 # Alternative old (worse & faster) setting: 600
