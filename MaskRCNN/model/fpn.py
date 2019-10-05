@@ -18,6 +18,7 @@ from config import config as cfg
 from utils.box_ops import area as tf_area
 from utils.mixed_precision import mixed_precision_scope
 from model.rpn import generate_rpn_proposals, rpn_losses, get_all_anchors
+from model.model_box import roi_align
 
 @layer_register(log_shape=True)
 def fpn_model(features, seed_gen, fp16=False):
