@@ -170,7 +170,7 @@ class ResNetFPNModel(DetectionModel):
         return p23456
 
 
-    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=True):
+    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=False):
         """
         The RPN part of the graph that generate the RPN proposal and losses
 
@@ -312,7 +312,7 @@ class ResNetFPNModel(DetectionModel):
                     batch_size=cfg.TRAIN.BATCH_SIZE_PER_GPU, seed_gen=seed_gen)
 
         # For the box/class branch
-        roi_feature_fastrcnn = multilevel_roi_align(features[:4], proposal_boxes, 7, deterministic=True) # Num_sampled_boxes x NumChannel x H_roi_box x W_roi_box
+        roi_feature_fastrcnn = multilevel_roi_align(features[:4], proposal_boxes, 7, deterministic=False) # Num_sampled_boxes x NumChannel x H_roi_box x W_roi_box
         fastrcnn_head_func = getattr(boxclass_head, cfg.FPN.BOXCLASS_HEAD_FUNC)
         head_feature = fastrcnn_head_func('fastrcnn', roi_feature_fastrcnn, seed_gen=seed_gen, fp16=self.fp16) # Num_sampled_boxes x Num_features
         # fastrcnn_label_logits: Num_sampled_boxes x Num_classes ,fastrcnn_box_logits: Num_sampled_boxes x Num_classes x 4
