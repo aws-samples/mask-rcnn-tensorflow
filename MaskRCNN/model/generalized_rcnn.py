@@ -19,6 +19,7 @@ from model.boxclass_head import boxclass_predictions, boxclass_outputs, BoxClass
 from model.biased_sampler import sample_fast_rcnn_targets
 from model.mask_head import maskrcnn_loss
 from model.rpn import rpn_head, multilevel_rpn_losses, generate_fpn_proposals, generate_fpn_proposals_topk_per_image
+from model.frcnn import sample_fast_rcnn_targets_det
 from utils.randomnness import SeedGenerator
 
 
@@ -170,7 +171,7 @@ class ResNetFPNModel(DetectionModel):
         return p23456
 
 
-    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=False):
+    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=True):
         """
         The RPN part of the graph that generate the RPN proposal and losses
 
@@ -276,7 +277,7 @@ class ResNetFPNModel(DetectionModel):
 
         return proposal_boxes, losses
 
-    def roi_heads(self, image, features, proposal_boxes, targets, inputs, seed_gen):
+    def roi_heads(self, image, features, proposal_boxes, targets, inputs, seed_gen, deterministic=True):
         """
         Implement the RoI Align and construct the RoI head (box and mask branches) of the graph
 
@@ -304,15 +305,23 @@ class ResNetFPNModel(DetectionModel):
             # Sample the input_proposal_boxes to make the foreground(fg) box and background(bg) boxes
             # ratio close to configuration. proposal_boxes: Num_sampled_boxs x 5, proposal_labels: 1-D Num_sampled_boxes
             # proposal_gt_id_for_each_fg contains indices for matching GT of each foreground box.
-            proposal_boxes, proposal_labels, proposal_gt_id_for_each_fg = sample_fast_rcnn_targets(
-                    input_proposal_boxes,
-                    input_gt_boxes,
-                    input_gt_labels,
-                    prepadding_gt_counts,
-                    batch_size=cfg.TRAIN.BATCH_SIZE_PER_GPU, seed_gen=seed_gen)
+            if deterministic:
+                proposals = sample_fast_rcnn_targets_det(input_proposal_boxes,
+                                                         input_gt_boxes,
+                                                         input_gt_labels)
+                proposal_boxes = proposals.boxes
+                proposal_labels = proposals.labels
+                proposal_gt_id_for_each_fg = proposals.fg_inds_wrt_gt
+            else:
+                proposal_boxes, proposal_labels, proposal_gt_id_for_each_fg = sample_fast_rcnn_targets(
+                        input_proposal_boxes,
+                        input_gt_boxes,
+                        input_gt_labels,
+                        prepadding_gt_counts,
+                        batch_size=cfg.TRAIN.BATCH_SIZE_PER_GPU, seed_gen=seed_gen)
 
         # For the box/class branch
-        roi_feature_fastrcnn = multilevel_roi_align(features[:4], proposal_boxes, 7, deterministic=False) # Num_sampled_boxes x NumChannel x H_roi_box x W_roi_box
+        roi_feature_fastrcnn = multilevel_roi_align(features[:4], proposal_boxes, 7, deterministic=deterministic) # Num_sampled_boxes x NumChannel x H_roi_box x W_roi_box
         fastrcnn_head_func = getattr(boxclass_head, cfg.FPN.BOXCLASS_HEAD_FUNC)
         head_feature = fastrcnn_head_func('fastrcnn', roi_feature_fastrcnn, seed_gen=seed_gen, fp16=self.fp16) # Num_sampled_boxes x Num_features
         # fastrcnn_label_logits: Num_sampled_boxes x Num_classes ,fastrcnn_box_logits: Num_sampled_boxes x Num_classes x 4
