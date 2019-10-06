@@ -19,7 +19,7 @@ from model.boxclass_head import boxclass_predictions, boxclass_outputs, BoxClass
 from model.biased_sampler import sample_fast_rcnn_targets
 from model.mask_head import maskrcnn_loss
 from model.rpn import rpn_head, multilevel_rpn_losses, generate_fpn_proposals, generate_fpn_proposals_topk_per_image
-from model.frcnn import sample_fast_rcnn_targets_det
+from model.model_frcnn import sample_fast_rcnn_targets_det
 from utils.randomnness import SeedGenerator
 
 
