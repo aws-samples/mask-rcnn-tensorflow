@@ -171,7 +171,7 @@ class ResNetFPNModel(DetectionModel):
         return p23456
 
 
-    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=True):
+    def rpn(self, image, features, inputs, orig_image_dims, seed_gen, deterministic=False):
         """
         The RPN part of the graph that generate the RPN proposal and losses
 
@@ -277,7 +277,7 @@ class ResNetFPNModel(DetectionModel):
 
         return proposal_boxes, losses
 
-    def roi_heads(self, image, features, proposal_boxes, targets, inputs, seed_gen, deterministic=True):
+    def roi_heads(self, image, features, proposal_boxes, targets, inputs, seed_gen, deterministic=False):
         """
         Implement the RoI Align and construct the RoI head (box and mask branches) of the graph
 
