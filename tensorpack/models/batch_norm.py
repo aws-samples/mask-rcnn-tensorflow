@@ -58,6 +58,13 @@ def update_bn_ema(xn, batch_mean, batch_var,
         tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, update_op2)
         return tf.identity(xn, name='output')
 
+try:
+    # When BN is used as an activation, keras layers try to autograph.convert it
+    # This leads to massive warnings
+    from tensorflow.python.autograph.impl.api import do_not_convert as disable_autograph
+except ImportError:
+    def disable_autograph():
+        return lambda x: x
 
 @layer_register()
 @convert_to_tflayer_args(
@@ -69,6 +76,7 @@ def update_bn_ema(xn, batch_mean, batch_var,
         'decay': 'momentum',
         'use_local_stat': 'training'
     })
+@disable_autograph()
 def BatchNorm(inputs, axis=None, training=None, momentum=0.9, epsilon=1e-5,
               center=True, scale=True,
               beta_initializer=tf.zeros_initializer(),

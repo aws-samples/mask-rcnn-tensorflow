@@ -129,12 +129,12 @@ def get_norm(zero_init=False):
 
 
 def resnet_shortcut(l, n_out, stride, seed_gen, activation=tf.identity):
-    n_in = l.shape[1] if cfg.TRAIN.NCHW else l.shape[-1]
+    n_in = l.shape[1] if cfg.TRAIN.BACKBONE_NCHW else l.shape[-1]
     if n_in != n_out:   # change dimension when channel is not the same
         # TF's SAME mode output ceil(x/stride), which is NOT what we want when x is odd and stride is 2
         # In FPN mode, the images are pre-padded already.
         if not cfg.MODE_FPN and stride == 2:
-            l = l[:, :, :-1, :-1] if cfg.TRAIN.NCHW else l[:, :-1, :-1, :]
+            l = l[:, :, :-1, :-1] if cfg.TRAIN.BACKBONE_NCHW else l[:, :-1, :-1, :]
         return Conv2D('convshortcut', l, n_out, 1,
                       strides=stride, activation=activation, seed=seed_gen.next())
     else:
@@ -145,13 +145,13 @@ def resnet_bottleneck(l, ch_out, stride, seed_gen):
     shortcut = l
     if cfg.BACKBONE.STRIDE_1X1:
         if stride == 2:
-            l = l[:, :, :-1, :-1] if cfg.TRAIN.NCHW else l[:, :-1, :-1, :]
+            l = l[:, :, :-1, :-1] if cfg.TRAIN.BACKBONE_NCHW else l[:, :-1, :-1, :]
         l = Conv2D('conv1', l, ch_out, 1, strides=stride, seed=seed_gen.next())
         l = Conv2D('conv2', l, ch_out, 3, strides=1, seed=seed_gen.next())
     else:
         l = Conv2D('conv1', l, ch_out, 1, strides=1, seed=seed_gen.next())
         if stride == 2:
-            if cfg.TRAIN.NCHW:
+            if cfg.TRAIN.BACKBONE_NCHW:
                 l = tf.pad(l, [[0, 0], [0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1)])
             else:
                 l = tf.pad(l, [[0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1), [0, 0]])
@@ -208,9 +208,9 @@ def resnet_fpn_backbone(image, num_blocks, seed_gen, fp16=False):
     Returns:
         Resnet features: c2-c5
     """
-    data_format = 'channels_first' if cfg.TRAIN.NCHW else 'channels_last'
+    data_format = 'channels_first' if cfg.TRAIN.BACKBONE_NCHW else 'channels_last'
     freeze_at = cfg.BACKBONE.FREEZE_AT
-    shape2d = tf.shape(image)[2:] if cfg.TRAIN.NCHW else tf.shape(image)[1:3]
+    shape2d = tf.shape(image)[2:] if cfg.TRAIN.BACKBONE_NCHW else tf.shape(image)[1:3]
     mult = float(cfg.FPN.RESOLUTION_REQUIREMENT)
     new_shape2d = tf.cast(tf.ceil(tf.cast(shape2d, tf.float32) / mult) * mult, tf.int32)
     pad_shape2d = new_shape2d - shape2d
@@ -221,23 +221,23 @@ def resnet_fpn_backbone(image, num_blocks, seed_gen, fp16=False):
 
     with mixed_precision_scope(mixed=fp16):
         with backbone_scope(freeze=freeze_at > 0, data_format=data_format):
-            chan = image.shape[1] if cfg.TRAIN.NCHW else image.shape[-1]
+            chan = image.shape[1] if cfg.TRAIN.BACKBONE_NCHW else image.shape[-1]
             pad_base = maybe_reverse_pad(2, 3)
             l = tf.pad(image, tf.stack(
                 [[0, 0],
                 [0, 0],
                 [pad_base[0], pad_base[1] + pad_shape2d[0]],
-                [pad_base[0], pad_base[1] + pad_shape2d[1]]])) if cfg.TRAIN.NCHW else tf.pad(image, tf.stack(
+                [pad_base[0], pad_base[1] + pad_shape2d[1]]])) if cfg.TRAIN.BACKBONE_NCHW else tf.pad(image, tf.stack(
                 [[0, 0],
                 [pad_base[0], pad_base[1] + pad_shape2d[0]],
                 [pad_base[0], pad_base[1] + pad_shape2d[1]],
                 [0, 0]]))
-            if cfg.TRAIN.NCHW:
+            if cfg.TRAIN.BACKBONE_NCHW:
                 l.set_shape([None, chan, None, None])
             else:
                 l.set_shape([None, None, None, chan])
             l = Conv2D('conv0', l, 64, 7, strides=2, padding='VALID', seed=seed_gen.next())
-            if cfg.TRAIN.NCHW:
+            if cfg.TRAIN.BACKBONE_NCHW:
                 l = tf.pad(l, [[0, 0], [0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1)])
             else:
                 l = tf.pad(l, [[0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1), [0, 0]])
