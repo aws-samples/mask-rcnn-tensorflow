@@ -37,16 +37,22 @@ def rpn_head(featuremap, channel, num_anchors, seed_gen, fp16=False):
         featuremap = tf.cast(featuremap, tf.float16)
 
     with mixed_precision_scope(mixed=fp16):
-        with argscope(Conv2D, data_format='channels_first',
+        with argscope(Conv2D, data_format='channels_first' if cfg.TRAIN.RPN_NCHW else 'channels_last',
                       kernel_initializer=tf.random_normal_initializer(stddev=0.01, seed=seed_gen.next())):
             hidden = Conv2D('conv0', featuremap, channel, 3, activation=tf.nn.relu, seed=seed_gen.next())
-            # BS x NumChannel x H_feature x W_feature
+            # BS x NumChannel x H_feature x W_feature NCHW
+            # BS x H_feature x W_feature x NumChannel NHWC
             label_logits = Conv2D('class', hidden, num_anchors, 1, seed=seed_gen.next())
-            # BS x NA x H_feature x W_feature
+            # BS x NA x H_feature x W_feature NCHW
+            # BS x H_feature x W_feature x NA NHWC
             box_logits = Conv2D('box', hidden, 4 * num_anchors, 1, seed=seed_gen.next())
-            # BS x (NA*4) x H_feature x W_feature
+            # BS x (NA*4) x H_feature x W_feature NCHW
+            # BS x H_feature x W_feature x (NA*4) NHWC
 
-            label_logits = tf.transpose(label_logits, [0, 2, 3, 1])  # BS x H_feature x W_feature x NA
+            if cfg.TRAIN.RPN_NCHW:
+                label_logits = tf.transpose(label_logits, [0, 2, 3, 1])  # BS x H_feature x W_feature x NA
+            else:
+                box_logits = tf.transpose(box_logits, [0, 3, 1, 2])  # BS x (NA*4) x H_feature x W_feature
 
     if fp16:
         label_logits = tf.cast(label_logits, tf.float32)

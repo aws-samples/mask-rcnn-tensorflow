@@ -34,7 +34,7 @@ def fpn_model(features, seed_gen, fp16=False):
         dtype_str = 'float16' if fp16 else 'float32'
         return FixedUnPooling(
             name, x, 2, unpool_mat=np.ones((2, 2), dtype=dtype_str),
-            data_format='channels_first')
+            data_format='channels_first' if cfg.TRAIN.FPN_NCHW else 'channels_last')
 
         # tf.image.resize is, again, not aligned.
         # with tf.name_scope(name):
@@ -45,7 +45,7 @@ def fpn_model(features, seed_gen, fp16=False):
         #     return x
 
     with mixed_precision_scope(mixed=fp16):
-      with argscope(Conv2D, data_format='channels_first',
+      with argscope(Conv2D, data_format='channels_first' if cfg.TRAIN.FPN_NCHW else 'channels_last',
                   activation=tf.identity, use_bias=True,
                   kernel_initializer=tf.variance_scaling_initializer(scale=1., seed=seed_gen.next())):
         lat_2345 = [Conv2D('lateral_1x1_c{}'.format(i + 2), c, num_channel, 1, seed=seed_gen.next())
@@ -63,7 +63,7 @@ def fpn_model(features, seed_gen, fp16=False):
                  for i, c in enumerate(lat_sum_5432[::-1])]
         if use_gn:
             p2345 = [GroupNorm('gn_p{}'.format(i + 2), c) for i, c in enumerate(p2345)]
-        p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first', padding='VALID')
+        p6 = MaxPooling('maxpool_p6', p2345[-1], pool_size=1, strides=2, data_format='channels_first' if cfg.TRAIN.FPN_NCHW else 'channels_last', padding='VALID')
 
         if fp16:
             return [tf.cast(l, tf.float32) for l in p2345] + [tf.cast(p6, tf.float32)]

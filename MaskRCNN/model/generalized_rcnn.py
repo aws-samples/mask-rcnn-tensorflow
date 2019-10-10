@@ -157,16 +157,23 @@ class ResNetFPNModel(DetectionModel):
 
 
     def backbone(self, image, seed_gen):
-        if not cfg.TRAIN.NCHW:
+        if not cfg.TRAIN.BACKBONE_NCHW:
             image = nchw_to_nhwc_transform(image)
         _c2345 = resnet_fpn_backbone(image, cfg.BACKBONE.RESNET_NUM_BLOCKS, seed_gen=seed_gen, fp16=self.fp16)
         c2345 = None
-        if not cfg.TRAIN.NCHW:
+        if not cfg.TRAIN.BACKBONE_NCHW:
             c2345 = [nhwc_to_nchw_transform(c) for c in _c2345]
         else:
             c2345 =  _c2345
         print("c2345", c2345)
-        p23456 = fpn_model('fpn', c2345, seed_gen=seed_gen, fp16=self.fp16)
+        if not cfg.TRAIN.FPN_NCHW:
+            c2345 = [nchw_to_nhwc_transform(c) for c in c2345]
+        _p23456 = fpn_model('fpn', c2345, seed_gen=seed_gen, fp16=self.fp16)
+        p23456 = None
+        if not cfg.TRAIN.FPN_NCHW:
+            p23456 = [nhwc_to_nchw_transform(c) for c in _p23456]
+        else:
+            p23456 = _p23456
         return p23456
 
 
@@ -190,6 +197,10 @@ class ResNetFPNModel(DetectionModel):
         all_anchors_fpn = get_all_anchors_fpn()
 
         rpn_outputs = []
+
+        if not cfg.TRAIN.RPN_NCHW:
+            features = [nchw_to_nhwc_transform(c) for c in features]
+
         for pi in features:
             # label_logits: BS x H_feaure x W_feature x NA, box_logits: BS x (NA * 4) x H_feature x W_feature
             label_logits, box_logits = rpn_head('rpn', pi, cfg.FPN.NUM_CHANNEL, len(cfg.RPN.ANCHOR_RATIOS), seed_gen=seed_gen, fp16=self.fp16)
@@ -342,6 +353,9 @@ class ResNetFPNModel(DetectionModel):
                         features[:4], proposal_fg_boxes, 14,
                         name_scope='multilevel_roi_align_mask')
 
+                if not cfg.TRAIN.MASK_NCHW:
+                    roi_feature_maskrcnn = nchw_to_nhwc_transform(roi_feature_maskrcnn)
+
                 mask_logits = maskrcnn_head_func(
                         'maskrcnn', roi_feature_maskrcnn, cfg.DATA.NUM_CATEGORY, seed_gen=seed_gen, fp16=self.fp16)   # Num_fg_boxes x num_category x (H_roi_mask*2) x (W_roi_mask*2)
                 per_image_target_masks_for_fg = []
@@ -392,6 +406,10 @@ class ResNetFPNModel(DetectionModel):
                 batch_ind_boxes = tf.concat((tf.expand_dims(batch_indices, 1), final_boxes), axis=1)
 
                 roi_feature_maskrcnn = multilevel_roi_align(features[:4], batch_ind_boxes, 14)
+
+                if not cfg.TRAIN.MASK_NCHW:
+                    roi_feature_maskrcnn = nchw_to_nhwc_transform(roi_feature_maskrcnn)
+
                 maskrcnn_head_func = getattr(mask_head, cfg.FPN.MRCNN_HEAD_FUNC)
                 mask_logits = maskrcnn_head_func(
                         'maskrcnn', roi_feature_maskrcnn, cfg.DATA.NUM_CATEGORY, seed_gen=seed_gen, fp16=self.fp16)   # #fg x #cat x 28 x 28
