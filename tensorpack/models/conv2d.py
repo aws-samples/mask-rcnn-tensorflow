@@ -29,6 +29,14 @@ def float32_variable_storage_getter(getter, name, shape=None, dtype=None,
         variable = tf.cast(variable, dtype)
     return variable
 
+def mixed_precision_scope(mixed=True, *args, **kwargs):
+    if not mixed:
+        return suppress()
+
+    return tf.variable_scope(name_or_scope=tf.get_variable_scope(),
+                             custom_getter=float32_variable_storage_getter,
+                             reuse=tf.AUTO_REUSE, *args, **kwargs)
+
 @layer_register(log_shape=True)
 @convert_to_tflayer_args(
     args_names=['filters', 'kernel_size'],
@@ -250,10 +258,12 @@ def Conv2DTranspose(
                               filters]
 
         kernel_shape = shape2d(kernel_size)
-        W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer, dtype=tf.float16)
-        if use_bias:
-            with tf.variable_scope(tf.get_variable_scope(), custom_getter=float32_variable_storage_getter):
-                b = tf.get_variable('b', [filters], initializer=bias_initializer, dtype=tf.float16)
+        import os
+        fp16 = True if os.getenv("TENSORPACK_FP16") else False
+        with mixed_precision_scope(mixed=fp16):
+            W = tf.get_variable('W', kernel_shape + [filters, channels_in], initializer=kernel_initializer, dtype=tf.float16 if fp16 else tf.float32)
+            if use_bias:
+                b = tf.get_variable('b', [filters], initializer=bias_initializer, dtype=tf.float16 if fp16 else tf.float32)
         with rename_get_variable({'kernel': 'W', 'bias': 'b'}):
             conv = tf.nn.conv2d_transpose(
                 inputs, W, out_shape_dyn,
