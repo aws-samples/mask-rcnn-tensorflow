@@ -63,4 +63,4 @@ TRAIN.WARMUP_INIT_LR=0.000416666666667 \
 FRCNN.BBOX_REG_WEIGHTS='[20., 20., 10., 10.]' \
 TRAIN.GRADIENT_CLIP=0 \
 TRAINER=horovod
-# Loss will go NaN if global batch size >= 128, set  to 1.5 to enable clip
+# Loss will go NaN if global batch size >= 128, set GRADIENT_CLIP to 1.5 to enable clip
