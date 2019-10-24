@@ -230,7 +230,8 @@ def Conv2DTranspose(
         if use_bias:
             ret.variables.b = layer.bias
     else:
-        # Our own implementation, to avoid Keras bugs. https://github.com/tensorflow/tensorflow/issues/25946
+        # Update from tensorpack: https://github.com/tensorpack/tensorpack/blob/master/tensorpack/models/conv2d.py#L204
+        # To avoid Keras bugs in TF > 1.14. https://github.com/tensorflow/tensorflow/issues/25946
         assert kernel_regularizer is None and bias_regularizer is None and activity_regularizer is None, \
             "Unsupported arguments due to Keras bug in TensorFlow 1.13"
         data_format = get_data_format(data_format, tfmode=False)
