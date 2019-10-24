@@ -106,8 +106,8 @@ def boxclass_predictions(boxes, scores):
     """
     assert boxes.shape[1] == cfg.DATA.NUM_CLASS
     assert scores.shape[1] == cfg.DATA.NUM_CLASS
-    boxes = tf.transpose(boxes, [1, 0, 2])[1:, :, :]  # #catxnx4 [80 1000 4]
-    scores = tf.transpose(scores[:, 1:], [1, 0])  # #catxn [80 1000]
+    boxes = tf.transpose(boxes, [1, 0, 2])[1:, :, :]  # #catxnx4
+    scores = tf.transpose(scores[:, 1:], [1, 0])  # #catxn
 
     max_coord = tf.reduce_max(boxes)
     filtered_ids = tf.where(scores > cfg.TEST.RESULT_SCORE_THRESH)  # Fx2
