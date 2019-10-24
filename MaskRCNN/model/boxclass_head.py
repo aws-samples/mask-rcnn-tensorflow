@@ -96,8 +96,8 @@ def boxclass_predictions(boxes, scores):
     Generate final results from predictions of all proposals.
 
     Args:
-        boxes: n#classx4 floatbox in float32 [1000 81 4]
-        scores: nx#class [1000 81]
+        boxes: n#classx4 floatbox in float32
+        scores: nx#class
 
     Returns:
         boxes: Kx4
