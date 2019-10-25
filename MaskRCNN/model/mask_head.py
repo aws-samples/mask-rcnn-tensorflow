@@ -72,7 +72,7 @@ def maskrcnn_upXconv_head(feature, num_category, seed_gen, num_convs, norm=None,
     if fp16:
         l = tf.cast(l, tf.float16)
     with mixed_precision_scope(mixed=fp16):
-      with argscope([Conv2D, Conv2DTranspose], data_format='channels_first',
+      with argscope([Conv2D, Conv2DTranspose], data_format='channels_first' if cfg.TRAIN.MASK_NCHW else 'channels_last',
                   kernel_initializer=tf.variance_scaling_initializer(
                       scale=2.0, mode='fan_out', seed=seed_gen.next(),
                       distribution='untruncated_normal' if get_tf_version_tuple() >= (1, 12) else 'normal')):
@@ -87,6 +87,8 @@ def maskrcnn_upXconv_head(feature, num_category, seed_gen, num_convs, norm=None,
         l = Conv2D('conv', l, num_category, 1, seed=seed_gen.next())
     if fp16:
         l = tf.cast(l, tf.float32)
+    if not cfg.TRAIN.MASK_NCHW:
+        l = tf.transpose(l, [0, 3, 1, 2])
     return l
 
 # Without Group Norm

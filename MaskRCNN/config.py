@@ -84,9 +84,9 @@ _C.MODE_FPN = True
 # dataset -----------------------
 _C.DATA.BASEDIR = '/path/to/your/DATA/DIR'
 # All TRAIN dataset will be concatenated for training.
-_C.DATA.TRAIN = ['train2014', 'valminusminival2014']   # i.e. trainval35k, AKA train2017
+_C.DATA.TRAIN = ['train2017']   # i.e. trainval35k, AKA train2017
 # Each VAL dataset will be evaluated separately (instead of concatenated)
-_C.DATA.VAL = ('minival2014', )  # AKA val2017
+_C.DATA.VAL = ('val2017', )  # AKA val2017
 # This two config will be populated later by the dataset loader:
 _C.DATA.NUM_CATEGORY = 0  # without the background class (e.g., 80 for COCO)
 _C.DATA.CLASS_NAMES = []  # NUM_CLASS (NUM_CATEGORY+1) strings, the first is "BG".
@@ -133,6 +133,10 @@ _C.TRAIN.EVAL_PERIOD = 25  # period (epochs) to run evaluation
 _C.TRAIN.BATCH_SIZE_PER_GPU = 1
 _C.TRAIN.SEED = 1234
 _C.TRAIN.GRADIENT_CLIP = 0 # set non-zero value to enable gradient clip, 0.36 is recommended for 32x4
+_C.TRAIN.BACKBONE_NCHW = True # use nchw for backbone
+_C.TRAIN.FPN_NCHW = True # use nchw for fpn
+_C.TRAIN.RPN_NCHW = True # use nchw for rpn head
+_C.TRAIN.MASK_NCHW = True # use nchw for maskhead
 
 # preprocessing --------------------
 # Alternative old (worse & faster) setting: 600
