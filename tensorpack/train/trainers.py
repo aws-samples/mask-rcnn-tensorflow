@@ -371,37 +371,63 @@ class HorovodTrainer(SingleCostTrainer):
            `ResNet-Horovod <https://github.com/tensorpack/benchmarks/tree/master/ResNet-Horovod>`_
            for a full example which has handled these common issues.
            This example can train ImageNet in roughly an hour following the paper's setup.
+    Attributes:
+        BROADCAST_EVERY_EPOCH (bool):
+            Whether to broadcast the variables every epoch.
+            Theoretically this is a no-op (because the variables
+            are supposed to be in-sync).
+            But this cheap operation may help prevent
+            certain numerical issues in practice.
     """
-    def __init__(self, average=True):
+
+    BROADCAST_EVERY_EPOCH = False
+
+    def __init__(self, average=True, compression=None):
         """
         Args:
             average (bool): whether to average or sum the gradients across processes.
+            compression: `hvd.Compression.fp16` or `hvd.Compression.none`
         """
         if 'pyarrow' in sys.modules:
             logger.warn("Horovod and pyarrow may conflict due to pyarrow bugs. "
                         "Uninstall pyarrow and use msgpack instead.")
         # lazy import
-        import horovod.tensorflow as _hvd
-        global hvd
-        hvd = _hvd
-
+        import horovod.tensorflow as hvd
+        import horovod
+        hvd_version = tuple(map(int, horovod.__version__.split('.')[:3]))
+        self.hvd = hvd
         hvd.init()
         self.is_chief = hvd.rank() == 0
         self._local_rank = hvd.local_rank()
         self._rank = hvd.rank()
         self._average = average
+        self._compression = compression
+        self._has_compression = hvd_version >= (0, 15, 0)
         logger.info("[HorovodTrainer] local rank={}".format(self._local_rank))
         super(HorovodTrainer, self).__init__()
 
+    def mpi_enabled(self):
+        """
+        Returns:
+            bool: whether hvd is currently running under MPI
+        """
+        try:
+            return self.hvd.mpi_enabled()
+        except AttributeError:
+            return False
+
     def allreduce(self, grads):
-        if hvd.size() == 1:
+        if self.hvd.size() == 1:
             return grads
         # copied from https://github.com/uber/horovod/blob/master/horovod/tensorflow/__init__.py
         averaged_gradients = []
-        with tf.name_scope("HVDAllReduce"):
+        with tf.name_scope("AllReduce"):
             for grad, var in grads:
                 if grad is not None:
-                    avg_grad = hvd.allreduce(grad, average=self._average)
+                    if self._compression is not None and self._has_compression:
+                        avg_grad = self.hvd.allreduce(grad, average=self._average, compression=self._compression)
+                    else:
+                        avg_grad = self.hvd.allreduce(grad, average=self._average)
                     averaged_gradients.append((avg_grad, var))
                 else:
                     averaged_gradients.append((None, var))
@@ -415,13 +441,16 @@ class HorovodTrainer(SingleCostTrainer):
             opt = get_opt_fn()
             self.train_op = opt.apply_gradients(grads, name='train_op')
 
-        def broadcast(self):
-            logger.info("Running horovod broadcast ...")
-            # the op will be created later in initialize()
-            self.trainer._broadcast_op.run()
-
-        cb = CallbackFactory(trigger=broadcast).set_chief_only(False)
+        cb = CallbackFactory(
+            before_train=self.broadcast,
+            trigger=self.broadcast if self.BROADCAST_EVERY_EPOCH else None
+        ).set_chief_only(False)
         return [cb]
+
+    def broadcast(self, _):
+        logger.info("Running broadcast ...")
+        # the op will be created in initialize()
+        self.sess.run(self._broadcast_op)
 
     @HIDE_DOC
     def initialize(self, session_creator, session_init):
@@ -429,7 +458,7 @@ class HorovodTrainer(SingleCostTrainer):
         # "right before" the graph is finalized,
         # because it needs to capture all the variables (which may be created by callbacks).
         with tf.name_scope('horovod_broadcast'):
-            self._broadcast_op = hvd.broadcast_global_variables(0)
+            self._broadcast_op = self.hvd.broadcast_global_variables(0)
 
         # it's important that our NewSessionCreator does not finalize the graph
         if not isinstance(session_creator, NewSessionCreator):
@@ -439,7 +468,7 @@ class HorovodTrainer(SingleCostTrainer):
         # https://github.com/tensorflow/tensorflow/issues/8136
         session_creator.config.gpu_options.visible_device_list = str(self._local_rank)
         try:
-            session_creator.config.inter_op_parallelism_threads = mp.cpu_count() // hvd.local_size()
+            session_creator.config.inter_op_parallelism_threads = mp.cpu_count() // self.hvd.local_size()
         except AttributeError:  # old horovod does not have local_size
             pass
         super(HorovodTrainer, self).initialize(session_creator, session_init)
@@ -454,7 +483,3 @@ class HorovodTrainer(SingleCostTrainer):
         else:
             logger.info("Rank {} waiting for initialization broadcasting ...".format(self._rank))
         self.sess.run(self._broadcast_op)
-
-
-# for lazy import
-hvd = None
