@@ -376,15 +376,15 @@ class EvalCallback(Callback):
                                                 shard=k, num_shards=self.num_predictor)
                               for k in range(self.num_predictor)]
         else:
-            # Eval on all ranks and use gather,
+            # Eval on all ranks and use gather
             self.predictor = self._build_predictor(0)
 
             if self.batched:
                 self.dataflow = get_batched_eval_dataflow(self._eval_dataset,
-                                              shard=hvd.local_rank(), num_shards=hvd.local_size(), batch_size=self.batch_size)
+                                              shard=hvd.rank(), num_shards=hvd.size(), batch_size=self.batch_size)
             else:
                 self.dataflow = get_eval_dataflow(self._eval_dataset,
-                                              shard=hvd.local_rank(), num_shards=hvd.local_size())
+                                              shard=hvd.rank(), num_shards=hvd.size())
 
 
     def _build_predictor(self, idx):
@@ -419,7 +419,7 @@ class EvalCallback(Callback):
                     all_results.extend(item)
 
         output_file = os.path.join(
-            logdir, '{}-outputs{}.json'.format(self._eval_dataset, self.global_step))
+            logdir, '{}-outputs{}'.format(self._eval_dataset, self.global_step))
 
         scores = DetectionDataset().eval_or_save_inference_results(
             all_results, self._eval_dataset, output_file)
