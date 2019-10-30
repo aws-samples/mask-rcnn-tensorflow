@@ -295,19 +295,18 @@ class DetectionDataset(object):
                 })
 
         ret = {}
-        assert output is not None, "COCO evaluation requires an output file!"
+        assert output is not None and len(output) > 0, "COCO evaluation requires an output file!"
         coco = COCODetection(cfg.DATA.BASEDIR, dataset)
+
         with open(output+'box.json', 'w') as f:
             json.dump(coco_results["bbox"], f)
-        if len(output):
-            # sometimes may crash if the results are empty?
-            ret.update(coco.print_coco_metrics(output+'box.json', 'bbox'))
+        ret.update(coco.print_coco_metrics(output+'box.json', 'bbox'))
+
         if len(coco_results['segm']):
             with open(output+'segm.json', 'w') as f:
                 json.dump(coco_results['segm'], f)
-            if len(output):
-                # sometimes may crash if the results are empty?
-                ret.update(coco.print_coco_metrics(output+'segm.json', 'segm'))
+            ret.update(coco.print_coco_metrics(output+'segm.json', 'segm'))
+
         return ret
     # code for singleton:
     _instance = None

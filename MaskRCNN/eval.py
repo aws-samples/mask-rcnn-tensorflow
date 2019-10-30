@@ -325,6 +325,13 @@ def gather_result_from_all_processes(local_results, root=0):
 
 
 class AsyncEvaluator():
+    '''
+    An async evaluator used to submit coco evaluation job to a background thread
+
+    Usage:
+    1. create the worker with: worker = AsyncEvaluator()
+    2. submit the job: work.submit_task(tag, background_task_fn, fn_inputs)
+    '''
     def __init__(self, num_threads=1, device=None):
         self.num_threads = num_threads
         self.pool = ThreadPoolExecutor(num_threads)
@@ -429,6 +436,10 @@ class AsyncEvalCallback(Callback):
     """
     A callback that runs evaluation once a while.
     It supports multi-gpu evaluation.
+
+    Supoort the async evaluation:
+    1. Running the graph on all gpus and gather the result on the master node
+    2. Running a background thread to do the coco evaluation
     """
 
     _chief_only = False
@@ -506,6 +517,7 @@ class AsyncEvalCallback(Callback):
             for k, v in scores.items():
                 self.trainer.monitors.put_scalar(k, v)
             return
+
         self.worker.submit_task(f"eval_{self.epoch_num}", background_coco, all_results)
 
     def _trigger_epoch(self):
