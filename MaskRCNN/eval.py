@@ -320,9 +320,7 @@ def multithread_predict_dataflow(dataflows, model_funcs):
 def gather_result_from_all_processes(local_results, root=0):
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
-    comm.barrier()
     res = comm.gather(local_results,root=root)
-    comm.barrier()
     return res
 
 
