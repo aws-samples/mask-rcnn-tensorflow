@@ -8,6 +8,7 @@ import sys
 import os
 import json
 import numpy as np
+from numba import jit
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -59,7 +60,7 @@ def _scale_box(box, scale):
     scaled_box[3] = y_c + h_half
     return scaled_box
 
-
+@jit
 def _paste_mask(box, mask, shape):
     """
     Args:
@@ -316,6 +317,31 @@ def multithread_predict_dataflow(dataflows, model_funcs):
         all_results = list(itertools.chain(*[fut.result() for fut in futures]))
         return all_results
 
+def gather_result_from_all_processes(local_results, root=0):
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    comm.barrier()
+    res = comm.gather(local_results,root=root)
+    comm.barrier()
+    return res
+
+
+class AsyncEvaluator():
+    def __init__(self, num_threads=1, device=None):
+        self.num_threads = num_threads
+        self.pool = ThreadPoolExecutor(num_threads)
+        self.events = {}
+
+    def submit_task(self, tag, fn, *args, **kwargs):
+        e = self.pool.submit(fn, *args, **kwargs)
+        self.events[tag] = e
+
+    def task_done(self, tag):
+        if tag in self.events.keys():
+            return self.events[tag].done()
+        else:
+            return False
+
 
 class EvalCallback(Callback):
     """
@@ -347,23 +373,25 @@ class EvalCallback(Callback):
         else:
             # Only eval on the first machine.
             # Alternatively, can eval on all ranks and use allgather, but allgather sometimes hangs
-            self._horovod_run_eval = hvd.rank() == hvd.local_rank()
-            if self._horovod_run_eval:
-                self.predictor = self._build_predictor(0)
+            #self._horovod_run_eval = hvd.rank() != 0
+            #if self._horovod_run_eval:
+            self.predictor = self._build_predictor(0)
 
-                if self.batched:
-                    self.dataflow = get_batched_eval_dataflow(self._eval_dataset,
-                                                  shard=hvd.local_rank(), num_shards=hvd.local_size(), batch_size=self.batch_size)
-                else:
-                    self.dataflow = get_eval_dataflow(self._eval_dataset,
-                                                  shard=hvd.local_rank(), num_shards=hvd.local_size())
+            if self.batched:
+                self.dataflow = get_batched_eval_dataflow(self._eval_dataset,
+                                              shard=hvd.rank(), num_shards=hvd.size(), batch_size=self.batch_size)
+            else:
+                self.dataflow = get_eval_dataflow(self._eval_dataset,
+                                              shard=hvd.rank(), num_shards=hvd.size())
 
-            self.barrier = hvd.allreduce(tf.random_normal(shape=[1]))
+            #self.barrier = hvd.allreduce(tf.random_normal(shape=[1]))
 
     def _build_predictor(self, idx):
         return self.trainer.get_predictor(self._in_names, self._out_names, device=idx)
 
     def _before_train(self):
+        if hvd.rank() == 0:
+            self.worker = AsyncEvaluator()
         eval_period = cfg.TRAIN.EVAL_PERIOD
         self.epochs_to_eval = set()
         for k in itertools.count(1):
@@ -374,40 +402,57 @@ class EvalCallback(Callback):
         logger.info("[EvalCallback] Will evaluate every {} epochs".format(eval_period))
 
     def _eval(self):
+        import time
+        def humanize_float(num):
+            return "{0:,.2f}".format(num)
         logdir = self._output_dir
         if cfg.TRAINER == 'replicated':
             all_results = multithread_predict_dataflow(self.dataflows, self.predictors)
         else:
-            filenames = [os.path.join(
-                logdir, 'outputs{}-part{}.json'.format(self.global_step, rank)
-            ) for rank in range(hvd.local_size())]
+            #filenames = [os.path.join(
+            #    logdir, 'outputs{}-part{}.json'.format(self.global_step, rank)
+            #) for rank in range(hvd.local_size())]
+            #local_results = None
+            #if self._horovod_run_eval:
+            if self.batched:
+                local_results = predict_dataflow_batch(self.dataflow, self.predictor)
+            else:
+                local_results = predict_dataflow(self.dataflow, self.predictor)
 
-            if self._horovod_run_eval:
-                if self.batched:
-                    local_results = predict_dataflow_batch(self.dataflow, self.predictor)
-                else:
-                    local_results = predict_dataflow(self.dataflow, self.predictor)
-
-                fname = filenames[hvd.local_rank()]
-                with open(fname, 'w') as f:
-                    json.dump(local_results, f)
-            self.barrier.eval()
+                #fname = filenames[hvd.local_rank()]
+                #with open(fname, 'w') as f:
+                    #json.dump(local_results, f)
+            #self.barrier.eval()
+            start_time = time.time()
+            results = gather_result_from_all_processes(local_results)
+            end_time = time.time()
+            print(f"rank[{hvd.rank()}] start time: {humanize_float(start_time)}, end time:{humanize_float(end_time)} gather time : {humanize_float(end_time-start_time)}")
             if hvd.rank() > 0:
                 return
             all_results = []
-            for fname in filenames:
-                with open(fname, 'r') as f:
-                    obj = json.load(f)
-                all_results.extend(obj)
-                os.unlink(fname)
+            for item in results:
+                if item is not None:
+                    all_results.extend(item)
+            #all_results = []
+            #for fname in filenames:
+            #    with open(fname, 'r') as f:
+            #        obj = json.load(f)
+            #    all_results.extend(obj)
+            #    os.unlink(fname)
 
-        output_file = os.path.join(
-            logdir, '{}-outputs{}.json'.format(self._eval_dataset, self.global_step))
-
-        scores = DetectionDataset().eval_or_save_inference_results(
-            all_results, self._eval_dataset, output_file)
-        for k, v in scores.items():
-            self.trainer.monitors.put_scalar(k, v)
+        def background_coco(all_results):
+            output_file = os.path.join(
+                logdir, '{}-outputs{}'.format(self._eval_dataset, self.global_step))
+            scores = DetectionDataset().eval_or_save_inference_results(
+                all_results, self._eval_dataset, output_file)
+            cfg.TRAIN.SHOULD_STOP = scores['mAP(bbox)/IoU=0.5:0.95'] >= 0.377 and scores['mAP(segm)/IoU=0.5:0.95'] >= 0.339
+            for k, v in scores.items():
+                self.trainer.monitors.put_scalar(k, v)
+            return
+        start_time = time.time()
+        self.worker.submit_task(f"eval_{self.epoch_num}", background_coco, all_results)
+        end_time = time.time()
+        print(f"rank[{hvd.rank()}] submit work time : {humanize_float(end_time-start_time)}")
 
     def _trigger_epoch(self):
         if self.epoch_num in self.epochs_to_eval:

@@ -137,6 +137,7 @@ _C.TRAIN.BACKBONE_NCHW = True # use nchw for backbone
 _C.TRAIN.FPN_NCHW = True # use nchw for fpn
 _C.TRAIN.RPN_NCHW = True # use nchw for rpn head
 _C.TRAIN.MASK_NCHW = True # use nchw for maskhead
+_C.TRAIN.SHOULD_STOP = False # use stop the training early (for async eval)
 
 # preprocessing --------------------
 # Alternative old (worse & faster) setting: 600
