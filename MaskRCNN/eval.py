@@ -402,43 +402,22 @@ class EvalCallback(Callback):
         logger.info("[EvalCallback] Will evaluate every {} epochs".format(eval_period))
 
     def _eval(self):
-        import time
-        def humanize_float(num):
-            return "{0:,.2f}".format(num)
         logdir = self._output_dir
         if cfg.TRAINER == 'replicated':
             all_results = multithread_predict_dataflow(self.dataflows, self.predictors)
         else:
-            #filenames = [os.path.join(
-            #    logdir, 'outputs{}-part{}.json'.format(self.global_step, rank)
-            #) for rank in range(hvd.local_size())]
-            #local_results = None
-            #if self._horovod_run_eval:
             if self.batched:
                 local_results = predict_dataflow_batch(self.dataflow, self.predictor)
             else:
                 local_results = predict_dataflow(self.dataflow, self.predictor)
 
-                #fname = filenames[hvd.local_rank()]
-                #with open(fname, 'w') as f:
-                    #json.dump(local_results, f)
-            #self.barrier.eval()
-            start_time = time.time()
             results = gather_result_from_all_processes(local_results)
-            end_time = time.time()
-            print(f"rank[{hvd.rank()}] start time: {humanize_float(start_time)}, end time:{humanize_float(end_time)} gather time : {humanize_float(end_time-start_time)}")
             if hvd.rank() > 0:
                 return
             all_results = []
             for item in results:
                 if item is not None:
                     all_results.extend(item)
-            #all_results = []
-            #for fname in filenames:
-            #    with open(fname, 'r') as f:
-            #        obj = json.load(f)
-            #    all_results.extend(obj)
-            #    os.unlink(fname)
 
         def background_coco(all_results):
             output_file = os.path.join(
@@ -449,10 +428,7 @@ class EvalCallback(Callback):
             for k, v in scores.items():
                 self.trainer.monitors.put_scalar(k, v)
             return
-        start_time = time.time()
         self.worker.submit_task(f"eval_{self.epoch_num}", background_coco, all_results)
-        end_time = time.time()
-        print(f"rank[{hvd.rank()}] submit work time : {humanize_float(end_time-start_time)}")
 
     def _trigger_epoch(self):
         if self.epoch_num in self.epochs_to_eval:

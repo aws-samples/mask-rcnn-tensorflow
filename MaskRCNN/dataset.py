@@ -60,8 +60,6 @@ class COCODetection(object):
         from pycocotools.cocoeval import COCOeval
         ret = {}
         fields = ['IoU=0.5:0.95', 'IoU=0.5', 'IoU=0.75', 'small', 'medium', 'large']
-        logger.info("load json file {}.".format(json_file))
-        logger.info("iou_type {}.".format(iou_type))
         json_obj = json.load(open(json_file))
         # Prevent crash in self.coco.loadRes if the json is empty
         if len(json_obj) == 0:
@@ -70,11 +68,8 @@ class COCODetection(object):
                 ret[f'mAP({iou_type})/' + fields[k]] = 0.0
             return ret
         self.coco.createIndex(use_ext=True)
-        logger.info("loading res")
         cocoDt = self.coco.loadRes(json_file, use_ext=True)
-        logger.info("start eval")
         cocoEval = COCOeval(self.coco, cocoDt, iou_type, use_ext=True)
-        #cocoEval = COCOeval(self.coco, cocoDt, 'bbox', use_ext=True)
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()
