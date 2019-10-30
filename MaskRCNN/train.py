@@ -24,7 +24,7 @@ from tensorpack.tfutils.common import get_tf_version_tuple
 from dataset import DetectionDataset
 from config import finalize_configs, config as cfg
 from data import get_eval_dataflow, get_train_dataflow, get_batch_train_dataflow
-from eval import DetectionResult, predict_image, multithread_predict_dataflow, EvalCallback
+from eval import DetectionResult, predict_image, multithread_predict_dataflow, EvalCallback, AsyncEvalCallback
 from viz import draw_annotation, draw_final_outputs, draw_predictions, draw_proposal_recall
 from performance import ThroughputTracker, humanize_float
 from model.generalized_rcnn import ResNetFPNModel
@@ -167,6 +167,9 @@ def call_only_once(func):
     return wrapper
 
 class AsyncTrainer(HorovodTrainer):
+    '''
+    A wrapper of the HorovodTrainer, will stop the training once the target accuracy is reached.
+    '''
     def __init__(self, average=True, compression=None):
         super(AsyncTrainer, self).__init__(average=average, compression=compression)
 
@@ -192,7 +195,10 @@ class AsyncTrainer(HorovodTrainer):
                     self._callbacks.before_epoch()
                     start_time = time.time()
                     for self.loop._local_step in range(self.loop.steps_per_epoch):
-                        if self.hooked_sess.should_stop() or cfg.TRAIN.SHOULD_STOP:
+                        if self.hooked_sess.should_stop():
+                            return
+                        if cfg.TRAIN.SHOULD_STOP:
+                            logger.info("Target accuracy has been reached, stop.....")
                             return
                         self.run_step()  # implemented by subclass
                         self._callbacks.trigger_step()
@@ -227,8 +233,8 @@ if __name__ == '__main__':
                                           "This argument is the path to the input image file")
     parser.add_argument('--config', help="A list of KEY=VALUE to overwrite those defined in config.py",
                         nargs='+')
-    parser.add_argument('--fp16', help="Train backbone in FP16", action="store_true")
-    parser.add_argument('--async_eval', help="Enable async evaluation, for mlperf", action="store_true")
+    parser.add_argument('--fp16', help="Train in FP16", action="store_true")
+    parser.add_argument('--async_eval', help="Enable async evaluation, for mlperf. Evaluation will run every epoch and training will be stopped once the target is hit", action="store_true")
     #################################################################################################################
     # Performance investigation arguments
     parser.add_argument('--throughput_log_freq', help="In perf investigation mode, code will print throughput after every throughput_log_freq steps as well as after every epoch", type=int, default=100)
@@ -296,6 +302,10 @@ if __name__ == '__main__':
 
         finalize_configs(is_training=True)
 
+        # Set evaluation every epoch for async eval mode
+        if args.async_eval:
+            cfg.TRAIN.EVAL_PERIOD = 1
+
         if cfg.TRAIN.SEED:
             tf.set_random_seed(cfg.TRAIN.SEED)
             fix_rng_seed(cfg.TRAIN.SEED*hvd.rank())
@@ -350,6 +360,9 @@ if __name__ == '__main__':
             SessionRunTimeout(60000).set_chief_only(True),   # 1 minute timeout
         ] + [
             EvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
+            for dataset in cfg.DATA.VAL
+        ] if not args.async_eval else [
+            AsyncEvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
             for dataset in cfg.DATA.VAL
         ]
         if not is_horovod:

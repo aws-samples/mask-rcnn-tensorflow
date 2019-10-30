@@ -213,6 +213,8 @@ _C.TEST.FRCNN_NMS_THRESH = 0.5
 _C.TEST.RESULT_SCORE_THRESH = 0.05
 _C.TEST.RESULT_SCORE_THRESH_VIS = 0.3   # only visualize confident results
 _C.TEST.RESULTS_PER_IM = 100
+_C.TEST.BOX_TARGET = 0.377
+_C.TEST.MASK_TARGET = 0.339
 
 _C.freeze()  # avoid typo / wrong config keys
 
