@@ -171,7 +171,7 @@ class AsyncHorovodTrainer(HorovodTrainer):
     A wrapper of the HorovodTrainer, will stop the training once the target accuracy is reached.
     '''
     def __init__(self, average=True, compression=None):
-        super(AsyncTrainer, self).__init__(average=average, compression=compression)
+        super(AsyncHorovodTrainer, self).__init__(average=average, compression=compression)
 
     @call_only_once
     def main_loop(self, steps_per_epoch, starting_epoch, max_epoch):
