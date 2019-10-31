@@ -166,7 +166,7 @@ def call_only_once(func):
 
     return wrapper
 
-class AsyncTrainer(HorovodTrainer):
+class AsyncHorovodTrainer(HorovodTrainer):
     '''
     A wrapper of the HorovodTrainer, will stop the training once the target accuracy is reached.
     '''
@@ -292,6 +292,9 @@ if __name__ == '__main__':
     else:
 
         is_horovod = cfg.TRAINER == 'horovod'
+        if args.async_eval:
+            assert is_horovod, "Async evaluation only support Horovod based trainer"
+
         if is_horovod:
             hvd.init()
             logger.info("Horovod Rank={}, Size={}".format(hvd.rank(), hvd.size()))
@@ -413,7 +416,7 @@ if __name__ == '__main__':
         )
 
         if args.async_eval:
-            trainer = AsyncTrainer(average=True)
+            trainer = AsyncHorovodTrainer(average=True)
         elif is_horovod:
             trainer = HorovodTrainer(average=True)
         else:
