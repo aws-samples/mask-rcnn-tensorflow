@@ -30,6 +30,7 @@ Make sure you have your data ready as in [Run with docker](https://github.com/aw
   ```
   - Create a config file in ssh_container folder with same content the `~/.ssh/config`
   - Copy the contents of the container's key `ssh_container/id_rsa.pub` to `ssh_container/authorized_keys`
+  - Change ownership of the `ssh_container/config` file by `sudo chown root:root config`. In the container you are the root user.
   - Check and change permission of files as needed in ssh_container directory to match the following
   ```
   drwxrwxr-x  2 ubuntu ubuntu 4096 Sep 13 17:42 ./
@@ -39,7 +40,6 @@ Make sure you have your data ready as in [Run with docker](https://github.com/aw
   -rw-------  1 ubuntu ubuntu 1679 Sep 12 23:27 id_rsa
   -rw-r--r--  1 ubuntu ubuntu  410 Sep 12 23:27 id_rsa.pub
   ```
-  - Change ownership of the `ssh_container/config` file by `sudo chown root:root config`. In the container you are the root user.
   - Create a file in the `~/.ssh` to execute commands inside the container by `vi /home/ubuntu/.ssh/mpicont.sh`. Add the following contents
   ```
   #!/bin/bash

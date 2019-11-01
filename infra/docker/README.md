@@ -1,6 +1,7 @@
 # Using Docker
-The ec2 instance must have the training data available at ~/data. You also need to have docker and nvidia-docker installed on the AMI.
+The ec2 instance must have the training data available at ~/data. You also need to have Nvidia driver, docker and nvidia-docker installed on the AMI.
 
+## To run with single node
 ### Build container
 - To use our docker image, run `docker pull fewu/mask-rcnn-tensorflow:master-latest`
 - To build your own image (it will be slow), run
@@ -30,7 +31,7 @@ Logs will be exposed to the ec2 instance at ~/logs.
 `ctl + p + q` will detach
 `docker ps` will give info on the running docker containers including convenient name.
 `docker attach $CONTAINER_NAME` will reattach to the running docker container.
+`docker exec -it $CONTAINER_NAME bash` will start a separate terminal.
 
-## Notes
-
-The current Dockerfile uses the wheel built for p3.16xl. The wheel built for p3dn.24xl might have a performance improvement, but it does not run on 16xl due to different available instruction sets.
+## TO run with multi-node
+- refer to [RUN_MULTI_NODE.md](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/RUN_MULTI_NODE.md)
