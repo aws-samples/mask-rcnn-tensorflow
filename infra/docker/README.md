@@ -33,5 +33,5 @@ Logs will be exposed to the ec2 instance at ~/logs.
 `docker attach $CONTAINER_NAME` will reattach to the running docker container.
 `docker exec -it $CONTAINER_NAME bash` will start a separate terminal.
 
-## TO run with multi-node
+## To run with multi-node
 - refer to [RUN_MULTI_NODE.md](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/RUN_MULTI_NODE.md)
