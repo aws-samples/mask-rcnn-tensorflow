@@ -1,7 +1,9 @@
 # Using Docker
-The ec2 instance must have the training data available at ~/data.
+The ec2 instance must have the training data available at ~/data. You also need to have docker and nvidia-docker installed on the AMI.
 
 ### Build container
+- To use our docker image, run `docker pull fewu/mask-rcnn-tensorflow:master-latest`
+- To build your own image (it will be slow), run
 ```
 git clone https://github.com/aws-samples/mask-rcnn-tensorflow.git
 cd mask-rcnn-tensorflow/infra/docker
