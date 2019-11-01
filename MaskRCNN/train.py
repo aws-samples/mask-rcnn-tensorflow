@@ -24,7 +24,7 @@ from tensorpack.tfutils.common import get_tf_version_tuple
 from dataset import DetectionDataset
 from config import finalize_configs, config as cfg
 from data import get_eval_dataflow, get_train_dataflow, get_batch_train_dataflow
-from eval import DetectionResult, predict_image, multithread_predict_dataflow, EvalCallback
+from eval import DetectionResult, predict_image, multithread_predict_dataflow, EvalCallback, AsyncEvalCallback
 from viz import draw_annotation, draw_final_outputs, draw_predictions, draw_proposal_recall
 from performance import ThroughputTracker, humanize_float
 from model.generalized_rcnn import ResNetFPNModel
@@ -129,6 +129,96 @@ def log_launch_config(log_full_git_diff):
     check_and_log('env')
     check_and_log('ps -elf | grep mpirun')
 
+def call_only_once(func):
+    """
+    Decorate a method or property of a class, so that this method can only
+    be called once for every instance.
+    Calling it more than once will result in exception.
+    """
+    import inspect
+    if six.PY2:
+        import functools32 as functools
+    else:
+        import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        self = args[0]
+        # cannot use hasattr here, because hasattr tries to getattr, which
+        # fails if func is a property
+        assert func.__name__ in dir(self), "call_only_once can only be used on method or property!"
+
+        if not hasattr(self, '_CALL_ONLY_ONCE_CACHE'):
+            cache = self._CALL_ONLY_ONCE_CACHE = set()
+        else:
+            cache = self._CALL_ONLY_ONCE_CACHE
+
+        cls = type(self)
+        # cannot use ismethod(), because decorated method becomes a function
+        is_method = inspect.isfunction(getattr(cls, func.__name__))
+        assert func not in cache, \
+            "{} {}.{} can only be called once per object!".format(
+                'Method' if is_method else 'Property',
+                cls.__name__, func.__name__)
+        cache.add(func)
+
+        return func(*args, **kwargs)
+
+    return wrapper
+
+class AsyncHorovodTrainer(HorovodTrainer):
+    '''
+    A wrapper of the HorovodTrainer, will stop the training once the target accuracy is reached.
+    '''
+    def __init__(self, average=True, compression=None):
+        super(AsyncHorovodTrainer, self).__init__(average=average, compression=compression)
+
+    @call_only_once
+    def main_loop(self, steps_per_epoch, starting_epoch, max_epoch):
+        """
+        Run the main training loop.
+
+        Args:
+            steps_per_epoch, starting_epoch, max_epoch (int):
+        """
+        with self.sess.as_default():
+            self.loop.config(steps_per_epoch, starting_epoch, max_epoch)
+            self.loop.update_global_step()
+            try:
+                self._callbacks.before_train()
+                # refresh global step (might have changed by callbacks) TODO ugly
+                # what if gs is changed later?
+                self.loop.update_global_step()
+                for self.loop._epoch_num in range(
+                        self.loop.starting_epoch, self.loop.max_epoch + 1):
+                    logger.info("Start Epoch {} ...".format(self.loop.epoch_num))
+                    self._callbacks.before_epoch()
+                    start_time = time.time()
+                    for self.loop._local_step in range(self.loop.steps_per_epoch):
+                        if self.hooked_sess.should_stop():
+                            return
+                        if cfg.TRAIN.SHOULD_STOP:
+                            logger.info("Target accuracy has been reached, stop.....")
+                            return
+                        self.run_step()  # implemented by subclass
+                        self._callbacks.trigger_step()
+                    self._callbacks.after_epoch()
+                    logger.info("Epoch {} (global_step {}) finished, time:{}.".format(
+                        self.loop.epoch_num, self.loop.global_step, humanize_time_delta(time.time() - start_time)))
+
+                    # trigger epoch outside the timing region.
+                    self._callbacks.trigger_epoch()
+                logger.info("Training has finished!")
+            except (StopTraining, tf.errors.OutOfRangeError) as e:
+                logger.info("Training was stopped by exception {}.".format(str(e)))
+            except KeyboardInterrupt:
+                logger.info("Detected Ctrl-C and exiting main loop.")
+                raise
+            finally:
+                self._callbacks.after_train()
+                self.hooked_sess.close()
+
+
 
 
 if __name__ == '__main__':
@@ -143,8 +233,8 @@ if __name__ == '__main__':
                                           "This argument is the path to the input image file")
     parser.add_argument('--config', help="A list of KEY=VALUE to overwrite those defined in config.py",
                         nargs='+')
-    parser.add_argument('--fp16', help="Train backbone in FP16", action="store_true")
-
+    parser.add_argument('--fp16', help="Train in FP16", action="store_true")
+    parser.add_argument('--async_eval', help="Enable async evaluation, for mlperf. Evaluation will run every epoch and training will be stopped once the target is hit", action="store_true")
     #################################################################################################################
     # Performance investigation arguments
     parser.add_argument('--throughput_log_freq', help="In perf investigation mode, code will print throughput after every throughput_log_freq steps as well as after every epoch", type=int, default=100)
@@ -202,6 +292,9 @@ if __name__ == '__main__':
     else:
 
         is_horovod = cfg.TRAINER == 'horovod'
+        if args.async_eval:
+            assert is_horovod, "Async evaluation only support Horovod based trainer"
+
         if is_horovod:
             hvd.init()
             logger.info("Horovod Rank={}, Size={}".format(hvd.rank(), hvd.size()))
@@ -211,6 +304,10 @@ if __name__ == '__main__':
             log_launch_config(args.log_full_git_diff)
 
         finalize_configs(is_training=True)
+
+        # Set evaluation every epoch for async eval mode
+        if args.async_eval:
+            cfg.TRAIN.EVAL_PERIOD = 1
 
         if cfg.TRAIN.SEED:
             tf.set_random_seed(cfg.TRAIN.SEED)
@@ -264,10 +361,19 @@ if __name__ == '__main__':
             PeakMemoryTracker(),
             EstimatedTimeLeft(median=True),
             SessionRunTimeout(60000).set_chief_only(True),   # 1 minute timeout
-        ] + [
-            EvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
-            for dataset in cfg.DATA.VAL
         ]
+
+        if args.async_eval:
+            callbacks.extend([
+                AsyncEvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
+                for dataset in cfg.DATA.VAL
+            ])
+        else:
+            callbacks.extend([
+                EvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
+                for dataset in cfg.DATA.VAL
+            ])
+
         if not is_horovod:
             callbacks.append(GPUUtilizationTracker())
 
@@ -309,8 +415,9 @@ if __name__ == '__main__':
             starting_epoch=cfg.TRAIN.STARTING_EPOCH
         )
 
-
-        if is_horovod:
+        if args.async_eval:
+            trainer = AsyncHorovodTrainer(average=True)
+        elif is_horovod:
             trainer = HorovodTrainer(average=True)
         else:
             # nccl mode appears faster than cpu mode

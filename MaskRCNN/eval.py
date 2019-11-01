@@ -8,6 +8,7 @@ import sys
 import os
 import json
 import numpy as np
+from numba import jit
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -59,7 +60,7 @@ def _scale_box(box, scale):
     scaled_box[3] = y_c + h_half
     return scaled_box
 
-
+@jit
 def _paste_mask(box, mask, shape):
     """
     Args:
@@ -316,6 +317,36 @@ def multithread_predict_dataflow(dataflows, model_funcs):
         all_results = list(itertools.chain(*[fut.result() for fut in futures]))
         return all_results
 
+def gather_result_from_all_processes(local_results, root=0):
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    res = comm.gather(local_results,root=root)
+    return res
+
+
+class AsyncEvaluator():
+    '''
+    An async evaluator used to submit coco evaluation job to a background thread
+
+    Usage:
+    1. create the worker with: worker = AsyncEvaluator()
+    2. submit the job: work.submit_task(tag, background_task_fn, fn_inputs)
+    '''
+    def __init__(self, num_threads=1, device=None):
+        self.num_threads = num_threads
+        self.pool = ThreadPoolExecutor(num_threads)
+        self.events = {}
+
+    def submit_task(self, tag, fn, *args, **kwargs):
+        e = self.pool.submit(fn, *args, **kwargs)
+        self.events[tag] = e
+
+    def task_done(self, tag):
+        if tag in self.events.keys():
+            return self.events[tag].done()
+        else:
+            return False
+
 
 class EvalCallback(Callback):
     """
@@ -345,20 +376,16 @@ class EvalCallback(Callback):
                                                 shard=k, num_shards=self.num_predictor)
                               for k in range(self.num_predictor)]
         else:
-            # Only eval on the first machine.
-            # Alternatively, can eval on all ranks and use allgather, but allgather sometimes hangs
-            self._horovod_run_eval = hvd.rank() == hvd.local_rank()
-            if self._horovod_run_eval:
-                self.predictor = self._build_predictor(0)
+            # Eval on all ranks and use gather
+            self.predictor = self._build_predictor(0)
 
-                if self.batched:
-                    self.dataflow = get_batched_eval_dataflow(self._eval_dataset,
-                                                  shard=hvd.local_rank(), num_shards=hvd.local_size(), batch_size=self.batch_size)
-                else:
-                    self.dataflow = get_eval_dataflow(self._eval_dataset,
-                                                  shard=hvd.local_rank(), num_shards=hvd.local_size())
+            if self.batched:
+                self.dataflow = get_batched_eval_dataflow(self._eval_dataset,
+                                              shard=hvd.rank(), num_shards=hvd.size(), batch_size=self.batch_size)
+            else:
+                self.dataflow = get_eval_dataflow(self._eval_dataset,
+                                              shard=hvd.rank(), num_shards=hvd.size())
 
-            self.barrier = hvd.allreduce(tf.random_normal(shape=[1]))
 
     def _build_predictor(self, idx):
         return self.trainer.get_predictor(self._in_names, self._out_names, device=idx)
@@ -378,36 +405,120 @@ class EvalCallback(Callback):
         if cfg.TRAINER == 'replicated':
             all_results = multithread_predict_dataflow(self.dataflows, self.predictors)
         else:
-            filenames = [os.path.join(
-                logdir, 'outputs{}-part{}.json'.format(self.global_step, rank)
-            ) for rank in range(hvd.local_size())]
+            if self.batched:
+                local_results = predict_dataflow_batch(self.dataflow, self.predictor)
+            else:
+                local_results = predict_dataflow(self.dataflow, self.predictor)
 
-            if self._horovod_run_eval:
-                if self.batched:
-                    local_results = predict_dataflow_batch(self.dataflow, self.predictor)
-                else:
-                    local_results = predict_dataflow(self.dataflow, self.predictor)
-
-                fname = filenames[hvd.local_rank()]
-                with open(fname, 'w') as f:
-                    json.dump(local_results, f)
-            self.barrier.eval()
+            results = gather_result_from_all_processes(local_results)
             if hvd.rank() > 0:
                 return
             all_results = []
-            for fname in filenames:
-                with open(fname, 'r') as f:
-                    obj = json.load(f)
-                all_results.extend(obj)
-                os.unlink(fname)
+            for item in results:
+                if item is not None:
+                    all_results.extend(item)
 
         output_file = os.path.join(
-            logdir, '{}-outputs{}.json'.format(self._eval_dataset, self.global_step))
+            logdir, '{}-outputs{}'.format(self._eval_dataset, self.global_step))
 
         scores = DetectionDataset().eval_or_save_inference_results(
             all_results, self._eval_dataset, output_file)
         for k, v in scores.items():
             self.trainer.monitors.put_scalar(k, v)
+
+    def _trigger_epoch(self):
+        if self.epoch_num in self.epochs_to_eval:
+            logger.info("Running evaluation ...")
+            self._eval()
+
+
+class AsyncEvalCallback(Callback):
+    """
+    A callback that runs evaluation once a while.
+    It supports multi-gpu evaluation.
+
+    Supoort the async evaluation:
+    1. Running the graph on all gpus and gather the result on the master node
+    2. Running a background thread to do the coco evaluation
+    """
+
+    _chief_only = False
+
+    def __init__(self, eval_dataset, in_names, out_names, output_dir, batch_size):
+        self._eval_dataset = eval_dataset
+        self._in_names, self._out_names = in_names, out_names
+        self._output_dir = output_dir
+        self.batched = batch_size > 0
+        self.batch_size = batch_size
+
+    def _setup_graph(self):
+        num_gpu = cfg.TRAIN.NUM_GPUS
+        if cfg.TRAINER == 'replicated':
+            # TF bug in version 1.11, 1.12: https://github.com/tensorflow/tensorflow/issues/22750
+            buggy_tf = get_tf_version_tuple() in [(1, 11), (1, 12)]
+
+            # Use two predictor threads per GPU to get better throughput
+            self.num_predictor = num_gpu if buggy_tf else num_gpu * 2
+            self.predictors = [self._build_predictor(k % num_gpu) for k in range(self.num_predictor)]
+            self.dataflows = [get_eval_dataflow(self._eval_dataset,
+                                                shard=k, num_shards=self.num_predictor)
+                              for k in range(self.num_predictor)]
+        else:
+            # Eval on all ranks and use gather
+            self.predictor = self._build_predictor(0)
+
+            if self.batched:
+                self.dataflow = get_batched_eval_dataflow(self._eval_dataset,
+                                              shard=hvd.rank(), num_shards=hvd.size(), batch_size=self.batch_size)
+            else:
+                self.dataflow = get_eval_dataflow(self._eval_dataset,
+                                              shard=hvd.rank(), num_shards=hvd.size())
+
+
+    def _build_predictor(self, idx):
+        return self.trainer.get_predictor(self._in_names, self._out_names, device=idx)
+
+    def _before_train(self):
+        if hvd.rank() == 0:
+            self.worker = AsyncEvaluator()
+        eval_period = cfg.TRAIN.EVAL_PERIOD
+        self.epochs_to_eval = set()
+        for k in itertools.count(1):
+            if k * eval_period > self.trainer.max_epoch:
+                break
+            self.epochs_to_eval.add(k * eval_period)
+        self.epochs_to_eval.add(self.trainer.max_epoch)
+        logger.info("[EvalCallback] Will evaluate every {} epochs".format(eval_period))
+
+    def _eval(self):
+        logdir = self._output_dir
+        if cfg.TRAINER == 'replicated':
+            all_results = multithread_predict_dataflow(self.dataflows, self.predictors)
+        else:
+            if self.batched:
+                local_results = predict_dataflow_batch(self.dataflow, self.predictor)
+            else:
+                local_results = predict_dataflow(self.dataflow, self.predictor)
+
+            results = gather_result_from_all_processes(local_results)
+            if hvd.rank() > 0:
+                return
+            all_results = []
+            for item in results:
+                if item is not None:
+                    all_results.extend(item)
+
+        def background_coco(all_results):
+            output_file = os.path.join(
+                logdir, '{}-outputs{}'.format(self._eval_dataset, self.global_step))
+            scores = DetectionDataset().eval_or_save_inference_results(
+                all_results, self._eval_dataset, output_file)
+            cfg.TRAIN.SHOULD_STOP = scores['mAP(bbox)/IoU=0.5:0.95'] >= cfg.TEST.BOX_TARGET and scores['mAP(segm)/IoU=0.5:0.95'] >= cfg.TEST.MASK_TARGET
+            for k, v in scores.items():
+                self.trainer.monitors.put_scalar(k, v)
+            return
+
+        self.worker.submit_task(f"eval_{self.epoch_num}", background_coco, all_results)
 
     def _trigger_epoch(self):
         if self.epoch_num in self.epochs_to_eval:

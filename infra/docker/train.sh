@@ -12,7 +12,7 @@ echo "BATCH_SIZE_PER_GPU: ${BATCH_SIZE_PER_GPU}"
 echo "THROUGHPUT_LOG_FREQ: ${THROUGHPUT_LOG_FREQ}"
 echo ""
 
-
+cd /mask-rcnn-tensorflow
 
 mpirun -np ${NUM_GPU} \
 --H localhost:${NUM_GPU} \
@@ -55,5 +55,3 @@ BACKBONE.NORM=FreezeBN \
 TRAIN.WARMUP_INIT_LR=0.000416666666667 \
 FRCNN.BBOX_REG_WEIGHTS='[20., 20., 10., 10.]' \
 TRAINER=horovod
-#For 32x4
-#TRAIN.GRADIENT_CLIP=1.5

@@ -50,7 +50,7 @@ class COCODetection(object):
         logger.info("Instances loaded from {}.".format(annotation_file))
 
     # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-    def print_coco_metrics(self, json_file):
+    def print_coco_metrics(self, json_file, iou_type):
         """
         Args:
             json_file (str): path to the results json file in coco format
@@ -61,33 +61,22 @@ class COCODetection(object):
         ret = {}
         fields = ['IoU=0.5:0.95', 'IoU=0.5', 'IoU=0.75', 'small', 'medium', 'large']
         json_obj = json.load(open(json_file))
-
         # Prevent crash in self.coco.loadRes if the json is empty
         if len(json_obj) == 0:
+            logger.info("json file is empty")
             for k in range(6):
-                ret['mAP(bbox)/' + fields[k]] = 0.0
-
-            if cfg.MODE_MASK:
-                for k in range(6):
-                    ret['mAP(segm)/' + fields[k]] = 0.0
+                ret[f'mAP({iou_type})/' + fields[k]] = 0.0
             return ret
-
-        cocoDt = self.coco.loadRes(json_file)
-        cocoEval = COCOeval(self.coco, cocoDt, 'bbox')
+        self.coco.createIndex(use_ext=True)
+        cocoDt = self.coco.loadRes(json_file, use_ext=True)
+        cocoEval = COCOeval(self.coco, cocoDt, iou_type, use_ext=True)
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()
 
         for k in range(6):
-            ret['mAP(bbox)/' + fields[k]] = cocoEval.stats[k]
+            ret[f'mAP({iou_type})/' + fields[k]] = cocoEval.stats[k]
 
-        if 'segmentation' in json_obj[0]:
-            cocoEval = COCOeval(self.coco, cocoDt, 'segm')
-            cocoEval.evaluate()
-            cocoEval.accumulate()
-            cocoEval.summarize()
-            for k in range(6):
-                ret['mAP(segm)/' + fields[k]] = cocoEval.stats[k]
         return ret
 
 
@@ -279,6 +268,9 @@ class DetectionDataset(object):
             dict: the evaluation results.
         """
         continuous_id_to_COCO_id = {v: k for k, v in COCODetection.COCO_id_to_category_id.items()}
+        coco_results = {}
+        coco_results['bbox'] = []
+        coco_results['segm'] = []
         for res in results:
             # convert to COCO's incontinuous category id
             res['category_id'] = continuous_id_to_COCO_id[res['category_id']]
@@ -288,15 +280,34 @@ class DetectionDataset(object):
             box[3] -= box[1]
             res['bbox'] = [round(float(x), 3) for x in box]
 
-        assert output is not None, "COCO evaluation requires an output file!"
-        with open(output, 'w') as f:
-            json.dump(results, f)
-        if len(output):
-            # sometimes may crash if the results are empty?
-            return COCODetection(cfg.DATA.BASEDIR, dataset).print_coco_metrics(output)
-        else:
-            return {}
+            coco_results["bbox"].append({
+                'image_id': res['image_id'],
+                'category_id': res['category_id'],
+                'bbox': res['bbox'],
+                'score': res['score']
+            })
+            if 'segmentation' in res.keys():
+                coco_results['segm'].append({
+                    'image_id': res['image_id'],
+                    'category_id': res['category_id'],
+                    'segmentation': res['segmentation'],
+                    'score': res['score']
+                })
 
+        ret = {}
+        assert output is not None and len(output) > 0, "COCO evaluation requires an output file!"
+        coco = COCODetection(cfg.DATA.BASEDIR, dataset)
+
+        with open(output+'box.json', 'w') as f:
+            json.dump(coco_results["bbox"], f)
+        ret.update(coco.print_coco_metrics(output+'box.json', 'bbox'))
+
+        if len(coco_results['segm']):
+            with open(output+'segm.json', 'w') as f:
+                json.dump(coco_results['segm'], f)
+            ret.update(coco.print_coco_metrics(output+'segm.json', 'segm'))
+
+        return ret
     # code for singleton:
     _instance = None
 

@@ -137,6 +137,7 @@ _C.TRAIN.BACKBONE_NCHW = True # use nchw for backbone
 _C.TRAIN.FPN_NCHW = True # use nchw for fpn
 _C.TRAIN.RPN_NCHW = True # use nchw for rpn head
 _C.TRAIN.MASK_NCHW = True # use nchw for maskhead
+_C.TRAIN.SHOULD_STOP = False # use stop the training early (for async eval)
 
 # preprocessing --------------------
 # Alternative old (worse & faster) setting: 600
@@ -212,6 +213,8 @@ _C.TEST.FRCNN_NMS_THRESH = 0.5
 _C.TEST.RESULT_SCORE_THRESH = 0.05
 _C.TEST.RESULT_SCORE_THRESH_VIS = 0.3   # only visualize confident results
 _C.TEST.RESULTS_PER_IM = 100
+_C.TEST.BOX_TARGET = 0.377
+_C.TEST.MASK_TARGET = 0.339
 
 _C.freeze()  # avoid typo / wrong config keys
 

@@ -12,7 +12,7 @@ echo "BATCH_SIZE_PER_GPU: ${BATCH_SIZE_PER_GPU}"
 echo "THROUGHPUT_LOG_FREQ: ${THROUGHPUT_LOG_FREQ}"
 echo ""
 
-
+cd /mask-rcnn-tensorflow
 
 mpirun -np ${NUM_GPU} \
 --hostfile ${HOSTFILE} \
@@ -38,7 +38,7 @@ mpirun -np ${NUM_GPU} \
 -x HOROVOD_CYCLE_TIME=0.5 \
 -x HOROVOD_FUSION_THRESHOLD=67108864 \
 --output-filename /logs/mpirun_logs \
-python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
+/mask-rcnn-tensorflow/infra/docker/ompi_bind_p3dn.sh python3 /mask-rcnn-tensorflow/MaskRCNN/train.py \
 --logdir /logs/train_log \
 --fp16 \
 --throughput_log_freq ${THROUGHPUT_LOG_FREQ} \
@@ -49,7 +49,7 @@ DATA.BASEDIR=/data \
 DATA.TRAIN='["train2017"]' \
 DATA.VAL='("val2017",)' \
 TRAIN.BATCH_SIZE_PER_GPU=${BATCH_SIZE_PER_GPU} \
-TRAIN.LR_EPOCH_SCHEDULE='[(8, 0.1), (10, 0.01), (12, None)]' \
+TRAIN.LR_EPOCH_SCHEDULE='[(9, 0.1), (12, 0.01), (20, None)]' \
 TRAIN.EVAL_PERIOD=24 \
 RPN.TOPK_PER_IMAGE=True \
 PREPROC.PREDEFINED_PADDING=False \
@@ -61,6 +61,8 @@ TRAIN.RPN_NCHW=False \
 TRAIN.MASK_NCHW=False \
 TRAIN.WARMUP_INIT_LR=0.000416666666667 \
 FRCNN.BBOX_REG_WEIGHTS='[20., 20., 10., 10.]' \
-TRAIN.GRADIENT_CLIP=0 \
+TRAIN.GRADIENT_CLIP=1.5 \
+RPN.SLOW_ACCURATE_MASK=False \
 TRAINER=horovod
-# Loss will go NaN if global batch size >= 128, set GRADIENT_CLIP to 1.5 to enable clip
+# You can set GRADIENT_CLIP to 0 to disable clip if your global batch size is smaller than 128
+# To enable eval every epoch and early stop, add --async_eval after --fp16
