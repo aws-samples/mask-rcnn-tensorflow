@@ -68,7 +68,7 @@ The coco eval usually takes more than 2 minutes. This will be a bottleneck for 2
 
 ## Determinism
 
-Determinism can help to converge to a more stable result across different runs. It is also helpful for debugging purposes. By setting up op level seed for the TF graph and a generator for other random numbers, we have fully determinism for the forward computation. However for backprop, the ROIAlign op's CUDA kernel uses `atomicAdd` which introduces randomness.
+Determinism can help to converge to a more stable result across different runs. It is also helpful for debugging purposes. By setting up op level seed for the TF graph and a generator for other random numbers, we have fully determinism for the forward computation. However for backprop, the ROIAlign op's CUDA kernel uses `atomicAdd` which introduces randomness. In order to maintain determinism, the TF_CUDNN_USE_AUTOTUNE should be set to 0. This is the default in our Docker container.
 
 ## Miscellaneous
  - Add gradient clipping to avoid loss going NaN when global batch >= 128
