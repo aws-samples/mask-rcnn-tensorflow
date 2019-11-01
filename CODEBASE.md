@@ -50,7 +50,7 @@ Loss scaling occurs inside of the Tensorpack library, not in the MaskRCNN model 
 
 According to Nvidia's update in MLPerf v0.6 - https://devblogs.nvidia.com/nvidia-boosts-ai-performance-mlperf-0-6/, tensor core accelerated convolution kernels expect NHWC (or “channels-last) layout. We added options to transpose convolution input data format to NHWC for backbone, FPN, RPN-head and mask-head.
 
-For tensorflow, NHWC kernel can only be activated by XLA or in Nvidia's NGC container. Since XLA doesn't work in our case (our tensor shapes are dynamic and tensorpack tower function can not be compiled with XLA), we use NGC container and set `TF_ENABLE_NHWC=1`
+For tensorflow, NHWC kernel can only be activated by XLA or in Nvidia's NGC container. Since XLA doesn't work in our case (our tensor shapes are dynamic and tensorpack tower function can not be compiled with XLA), we use NGC container and export `TF_ENABLE_NHWC=1`
 
 ## Disable Cudnn autotune and use aspect ratio grouping
 
@@ -65,6 +65,10 @@ Reference: https://github.com/facebookresearch/Detectron/blob/35fede2bd11176c600
 MLPerf v0.6 requires to evaluate every epoch and stop the training once the target accuracy is reached (box/mask 0.377/0.339). We start a background thread overlap the coco eval with the next iteration computation. Use the `--async_eval` to enable this feature.
 
 The coco eval usually takes more than 2 minutes. This will be a bottleneck for 24 nodes when each epoch takes less than 2 minutes. We adopt the [Nvidia's own implementation](https://github.com/NVIDIA/cocoapi/) of coco eval, which cut the time to less than 10 seconds.
+
+## Determinism
+
+Determinism can help to converge to a more stable result across different runs. It is also helpful for debugging purposes. By setting up op level seed for the TF graph and a generator for other random numbers, we have fully determinism for the forward computation. However for backprop, the ROIAlign op's CUDA kernel uses `atomicAdd` which introduces randomness.
 
 ## Miscellaneous
  - Add gradient clipping to avoid loss going NaN when global batch >= 128
@@ -84,11 +88,14 @@ Reference: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html
 
 ## Using CPU core binding to increase the CPU utilization
 
-There are 64 CPU cores for P3.16xl and 96 CPU cores for P3dn.24xl. When we train with Horovod we have 1 process for each of the GPU, if we don't schedule some processes may race for the same CPU cores. Our binding script ([P3](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/ompi_bind_p3_16.sh), [P3dn](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/ompi_bind_p3dn.sh)) will evenly distribute the cores among all processes which increase the CPU utilization
+There are 64 CPU cores for P3.16xl and 96 CPU cores for P3dn.24xl. When we train with Horovod we have 1 process for each of the GPU. However, some processes may race for the same CPU cores if we don't schedule well.
+
+Our binding script ([P3](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/ompi_bind_p3_16.sh), [P3dn](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/docker/ompi_bind_p3dn.sh)) will evenly distribute the cores among all processes which increase the CPU utilization
 
 # TODO
 
 ## Tensorpack changes since fork we may want to port
 
+- Fully determinism
 - Port TensorSpec changes, replacing tf.placeholder
 - Change to L1 loss? - https://github.com/tensorpack/tensorpack/commit/d263818b8fe8d8e096c4826dc5f2432901c5a894#diff-75814de28422d125213d581d1a36d92a
