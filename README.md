@@ -49,7 +49,7 @@ A pre-built dockerfile is available in DockerHub under `fewu/mask-rcnn-tensorflo
   - If you want to build your own image, please refer to our [Dockerfile](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/Dockerfile). Please note that you need to rebuild Tensorflow when building the docker image, it is time-consuming.
   - Alternatively, you can use our pre-built docker image: `fewu/mask-rcnn-tensorflow:master-latest`.
 - To run on AWS
-  - To train with docker on EC2, refer to [Docker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/docker)
+  - To train with docker on EC2 (best performance), refer to [Docker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/docker)
   - To train with Amazon EKS, refer to [EKS](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/eks)
   - To train with Amazon SageMaker, refer to [SageMaker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/sm)
 
