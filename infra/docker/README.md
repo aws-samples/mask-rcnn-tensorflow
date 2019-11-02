@@ -3,7 +3,7 @@ The ec2 instance must have the training data available at ~/data. You also need 
 
 ## To run with single node
 ### Build container
-- To use our docker image, run `docker pull fewu/mask-rcnn-tensorflow:master-latest`
+- To use our docker image, run `docker pull awssamples/mask-rcnn-tensorflow:latest`
 - To build your own image (it will be slow), run
 ```
 git clone https://github.com/aws-samples/mask-rcnn-tensorflow.git
