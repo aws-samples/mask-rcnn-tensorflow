@@ -6,8 +6,8 @@ WORKDIR /opt/tensorflow
 
 # download patch for custom tensorflow functions
 RUN cd tensorflow-source && \
-	wget https://github.com/aws-samples/mask-rcnn-tensorflow/releases/download/v0.0.0/SizeFix.patch && \
-	patch -p1 < SizeFix.patch && \
+	wget https://github.com/aws-samples/mask-rcnn-tensorflow/releases/download/v0.0.0/CustomOp.patch && \
+	patch -p1 < CustomOp.patch && \
 	cd ..
 
 # modify nvidia build script to optimize for P3 instances
