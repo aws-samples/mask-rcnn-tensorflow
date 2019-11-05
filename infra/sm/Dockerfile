@@ -32,8 +32,15 @@ RUN mkdir -p /root/.ssh/ && \
 
 
 RUN pip install Cython
-RUN pip install ujson opencv-python pycocotools matplotlib
+RUN pip install ujson opencv-python matplotlib
 RUN pip install --ignore-installed numpy==1.16.2
+RUN pip install pybind11
+
+# add custom nvidia coco tools
+# need to be modified for pybind11 header files
+RUN git clone https://github.com/NVIDIA/cocoapi && \
+    cd cocoapi/PythonAPI && \
+    make install
 
 RUN pip install mpi4py
 RUN pip install numba
