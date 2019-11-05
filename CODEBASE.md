@@ -35,6 +35,8 @@ In the ROI heads, we use `tf.roi_align`.
 
 Both of these are implemented here: https://github.com/samikama/tensorflow/commits/GenerateProposalsOp
 
+You can also find the git patch `CustomOp.patch` under our [release](https://github.com/aws-samples/mask-rcnn-tensorflow/releases) that can be applied to TF1.14.
+
 These ops is being upstreamed to TF (with some minor differences) and we will move this codebase to the native TF ops once we are able.
 
 - ROIAlign PR - https://github.com/tensorflow/tensorflow/pull/28746
