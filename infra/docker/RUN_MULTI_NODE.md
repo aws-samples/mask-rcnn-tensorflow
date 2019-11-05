@@ -56,6 +56,8 @@ Make sure you have your data ready as in [Run with docker](https://github.com/aw
 - Save this instance as an AMI
   - (Optional but highly recommended) Install [ClusterShell](https://clustershell.readthedocs.io/en/latest/index.html). It allows you to run some commands on all nodes in your cluster easily.
   - Install other packages you need
+
+### Launch the multi-node container training
 - Launch the cluster using the AMI you created, SSH into your master node
 - Run the following commands on all nodes (clush can be useful here)
   - pull image `docker pull $IMAGE_NAME`
