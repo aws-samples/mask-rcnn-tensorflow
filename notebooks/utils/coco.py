@@ -6,104 +6,118 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import json
 
-class COCOLoader(COCO):
+class COCOSubsetter(object):
+    """
+    Tools for subsetting COCO data. Can be used to create a smaller subset of
+    data either randomly, or by using in conjunction with pycocotools
+    to subset by category. Can also be used to duplicate a dataset. For example,
+    if the user wants to train on a single image for testing, that image can be
+    duplicated multiple times.
+    """
     def __init__(self, data_dir):
         """
+
         Parameters
         ----------
-        data_dir
-        str: location of COCO data files
+        data_dir : str
+            Filepath location of of COCO data. Expects to find
+            subdirectories for train2017 and annotations
         """
         self.data_dir = Path(data_dir)
-        self.annotations_dir = self.data_dir.joinpath('annotations/instances_train2017.json')
-        self.train_dir = self.data_dir.joinpath('train2017')
-        super(COCOLoader, self).__init__(self.annotations_dir.as_posix())
-        self.images = list(self.train_dir.glob('*.jpg'))
-        #self.images = {os.path.splitext(os.path.basename(i.as_posix()))[0].lstrip('0'): i for i in self.images}
-        self.images = {int(os.path.splitext(os.path.basename(i.as_posix()))[0]): i for i in self.images}
-        return
-
-    def random_subset(self, count):
-        images = np.random.choice(list(self.images.keys()), size=count)
-        return {i:self.images[i] for i in images}
-
-    def create_subset(self, images, directory):
-        directory = Path(directory)
-        if not directory.exists():
-            directory.mkdir()
-        train_subset = directory.joinpath('train2017')
-        if not train_subset.exists():
-            train_subset.mkdir()
-        annotation_dir = directory.joinpath('annotations')
-        if not annotation_dir.exists():
-            annotation_dir.mkdir()
-        for image in images:
-            shutil.copy(self.images[image], train_subset.joinpath(os.path.basename(self.images[image])))
-        annotation_ids = self.getAnnIds(images)
-        annotations = self.loadAnns(annotation_ids)
-        with open(annotation_dir.joinpath('instances_train2017.json'), 'w') as anno_file:
-            anno_file.write(json.dumps(annotations))
-
-class COCOSubsetter(object):
-    def __init__(self, data_dir):
-        self.data_dir = Path(data_dir)
         self.instance_file = self.data_dir.joinpath('annotations/instances_train2017.json')
         self.train_dir = self.data_dir.joinpath('train2017')
         self.images = list(self.train_dir.glob('*.jpg'))
-        self.images = {int(os.path.splitext(os.path.basename(i.as_posix()))[0]): i for i in self.images}
+        self.images = {int(os.path.splitext(os.path.basename(i.as_posix()))[0]): \
+                           i for i in self.images}
         return
 
     def random_subset(self, count):
+        """
+
+        Parameters
+        ----------
+        count : int
+            the number of random images to select
+
+        Returns
+        -------
+        dict
+            dictionary of {image_id: Path(image)}
+        """
         images = np.random.choice(list(self.images.keys()), size=count)
         return {i:self.images[i] for i in images}
 
     def load_annotations(self):
+        """
+        Load annotations for COCO data
+
+        Returns
+        -------
+
+        """
         with open(self.instance_file) as infile:
             self.instances = json.load(infile)
 
-    def filter_subset(self, images):
-        subset = dict()
-        subset['info'] = self.instances['info']
-        subset['licenses'] = self.instances['licenses']
-        subset['categories'] = self.instances['categories']
-        subset['annotations'] = [i for i in self.instances['annotations'] if i['image_id'] in images]
-        subset['images'] = [i for i in self.instances['images'] if i['id'] in images]
-        return subset
+    def _create_new_annotations(self, annotations, images):
+        """
+        Used for generating a new set of annotations
+        info licenses and categories are the same for
+        the subset, so just copy them. For annotations
+        and images, take a new set to combine.
+        Parameters
+        ----------
+        annotations : list[dict]
+            a list of dictionaries of annotations
+        images : list[dict]
+            a list of dictionaries of image information
 
-    def create_subset_dir(self, dir):
-        assert not dir.exists(), "directory {} exists".format(dir.as_posix())
-        dir.mkdir()
-        dir.joinpath('annotations').mkdir()
-        dir.joinpath('train2017').mkdir()
+        Returns
+        -------
+        dict
+            A dictionary mirroring the annotations format
+        """
+        new_annotations = dict()
+        new_annotations['info'] = self.instances['info']
+        new_annotations['licenses'] = self.instances['licenses']
+        new_annotations['categories'] = self.instances['categories']
+        new_annotations['annotations'] = annotations
+        new_annotations['images'] = images
+        return new_annotations
 
-    def create_subset(self, images, dir):
-        dir = Path(dir)
-        self.create_subset_dir(dir)
-        for image in images:
-            shutil.copy(self.images[image],
-                        dir.joinpath('train2017').joinpath(os.path.basename(self.images[image])))
-        with open(dir.joinpath('annotations').joinpath('instances_train2017.json'), 'w') as anno_file:
-            anno_file.write(json.dumps(self.filter_subset(images)))
+    def filter_annotations(self, images):
+        """
+        Given a set of image ids, subset the annotations and images
+        and combine with other fields of the annotations file
+        Parameters
+        ----------
+        images : list[int]
+            a list of image ids
 
-
-class COCODuplicator(object):
-    def __init__(self, data_dir):
-        self.data_dir = Path(data_dir)
-        self.instance_file = self.data_dir.joinpath('annotations/instances_train2017.json')
-        self.train_dir = self.data_dir.joinpath('train2017')
-        self.images = list(self.train_dir.glob('*.jpg'))
-        self.images = {int(os.path.splitext(os.path.basename(i.as_posix()))[0]): i for i in self.images}
-        return
-
-    def load_annotations(self):
-        with open(self.instance_file) as infile:
-            self.instances = json.load(infile)
+        Returns
+        -------
+        dict
+            A dictionary of new annotations
+        """
+        annotations = [i for i in self.instances['annotations'] if i['image_id'] in images]
+        images = [i for i in self.instances['images'] if i['id'] in images]
+        return self._create_new_annotations(annotations, images)
 
     def duplicate_annotations(self, count):
-        dup_annotations = dict()
-        dup_annotations['info'] = self.instances['info']
-        dup_annotations['licenses'] = self.instances['licenses']
-        dup_annotations['categories'] = self.instances['categories']
+        """
+        Create duplicates of the annotations by incrementing ids and filenames.
+        Given a count, apply the range of (0,count) to the end of the image ids
+        and filenames.
+
+        Parameters
+        ----------
+        count : int
+            The number of time to duplicate the annotations
+
+        Returns
+        -------
+        dict
+            A dictionary of new annotations
+        """
         new_annotations = []
         new_images = []
         for num in range(count):
@@ -118,20 +132,77 @@ class COCODuplicator(object):
                                                           str(num),
                                                           filename[1])
                 new_images.append(image_copy)
-        dup_annotations['annotations'] = new_annotations
-        dup_annotations['images'] = new_images
-        return dup_annotations
+        return self._create_new_annotations(new_annotations, new_images)
 
+    def create_subset_dir(self, dir):
+        """
+        Checks if the output directory exists and creates it if it doesn't
+        Parameters
+        ----------
+        dir : str
+            filepath for output
 
+        Returns
+        -------
+        None
 
+        Raises
+        ------
+        AssertionError
+            If directory already exists, return error
+        """
+        assert not dir.exists(), "directory {} exists".format(dir.as_posix())
+        dir.mkdir()
+        dir.joinpath('annotations').mkdir()
+        dir.joinpath('train2017').mkdir()
 
+    def create_subset(self, images, dir):
+        """
+        Create a new dataset based on a list of images
 
+        Parameters
+        ----------
+        images : list[int]
+            A list of image ids
+        dir : str
+            path for output
 
-coco_loader = COCOSubsetter('/Users/jbsnyder/PycharmProjects/mrcnn-notebooks/data')
+        Returns
+        -------
+        None
+        """
+        dir = Path(dir)
+        self.create_subset_dir(dir)
+        for image in images:
+            shutil.copy(self.images[image],
+                        dir.joinpath('train2017').joinpath(os.path.basename(self.images[image])))
+        with open(dir.joinpath('annotations').joinpath('instances_train2017.json'), 'w') as anno_file:
+            anno_file.write(json.dumps(self.filter_subset(images)))
 
-coco_loader.load_annotations()
-images = coco_loader.random_subset(10)
-coco_loader.filter_subset(list(images.keys()))
+    def duplicate_dataset(self, count, dir):
+        """
+        Create a new dataset with duplicated images
 
-coco_dup = COCODuplicator('/Users/jbsnyder/PycharmProjects/mrcnn-notebooks/subset')
+        Parameters
+        ----------
+        count : int
+            Number of duplicates to generate
+        dir : str
+            output directory
+
+        Returns
+        -------
+        None
+        """
+        dir = Path(dir)
+        self.create_subset_dir(dir)
+        new_annotations = self.duplicate_annotations(count)
+        for image in images:
+            basename = os.path.basename(image)[0]
+            for num in range(count):
+                new_file = basename + str(num) + '.jpg'
+                shutil.copy(self.images[image],
+                        dir.joinpath('train2017').joinpath(new_file))
+        with open(dir.joinpath('annotations').joinpath('instances_train2017.json'), 'w') as outfile:
+            outfile.write(json.dumps(new_annotations))
 
