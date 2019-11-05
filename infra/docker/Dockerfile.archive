@@ -32,6 +32,8 @@ RUN mkdir -p /root/.ssh/ && \
 RUN pip install Cython
 RUN pip install ujson opencv-python pycocotools matplotlib
 RUN pip install --ignore-installed numpy==1.16.2
+RUN pip install numba
+RUN pip install mpi4py
 
 
 # TODO: Do I really need this now that we are using the DL container?
