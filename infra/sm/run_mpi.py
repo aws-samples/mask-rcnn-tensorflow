@@ -115,20 +115,6 @@ def train(hosts, current_host, num_gpus, custom_mpi_cmds):
     env = framework.training_env(hyperparameters=hyperparameters)
     process_slots_per_host = num_gpus
 
-    # Data Preprocessing
-    print("Download pre-trained model....")
-    subprocess.check_call("mkdir -p /opt/ml/code/data/pretrained-models", shell=True)
-    subprocess.check_call("wget http://models.tensorpack.com/FasterRCNN/ImageNet-R50-AlignPadding.npz", shell=True)
-    subprocess.check_call("cp ImageNet-R50-AlignPadding.npz data/pretrained-models", shell=True)
-    print("Loading data from s3......")
-    subprocess.check_call("aws s3 cp s3://armand-ajay-workshop/mask-rcnn/sagemaker/input/train /opt/ml/code/data --recursive --quiet", shell=True)
-    print("Loading data finsihed...Install tensorpack....")
-    subprocess.check_call("git clone https://github.com/aws-samples/mask-rcnn-tensorflow /opt/ml/code/mask-rcnn-tensorflow", shell=True)
-    subprocess.check_call("chmod -R +w /opt/ml/code/mask-rcnn-tensorflow", shell=True)
-    subprocess.check_call("pip install --ignore-installed -e /opt/ml/code/mask-rcnn-tensorflow/", shell=True)
-    subprocess.check_call("chmod +x /opt/ml/code/run.sh", shell=True)
-    print("Tensorpack install finished...")
-
     _start_ssh_daemon()
     # Remove the conflict MPI setting
     subprocess.check_call("sed -ie \"s/btl_tcp_if_exclude/#btl_tcp_if_exclude/g\" /usr/local/etc/openmpi-mca-params.conf", shell=True)
@@ -153,6 +139,7 @@ def train(hosts, current_host, num_gpus, custom_mpi_cmds):
                            ' -x NCCL_SOCKET_IFNAME={} \\\n'.format(env.network_interface_name), \
                            ' -x NCCL_MIN_NRINGS=8 \\\n', \
                            ' -x HOROVOD_CYCLE_TIME=0.5 \\\n', \
+                           ' -x TF_CUDNN_USE_AUTOTUNE=0 \\\n', \
                            ' -x HOROVOD_FUSION_THRESHOLD=67108864 \\\n', \
                            ' -x TENSORPACK_FP16=1 \\\n', \
                            ' -x PATH \\\n', \
