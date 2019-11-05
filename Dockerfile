@@ -4,7 +4,7 @@ FROM awssamples/mask-rcnn-tensorflow:base
 
 # add mask-rcnn packages
 RUN apt-get update && \
-    apt-get install -y libsm6 libxext6 libxrender-dev awscli&& \
+    apt-get install -y libsm6 libxext6 libxrender-dev awscli && \
     pip install opencv-python
 
 RUN pip uninstall -y pycocotools && \
