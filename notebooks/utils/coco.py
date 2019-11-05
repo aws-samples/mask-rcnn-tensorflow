@@ -197,7 +197,7 @@ class COCOSubsetter(object):
         dir = Path(dir)
         self.create_subset_dir(dir)
         new_annotations = self.duplicate_annotations(count)
-        for image in images:
+        for image in self.images.values():
             basename = os.path.basename(image)[0]
             for num in range(count):
                 new_file = basename + str(num) + '.jpg'
