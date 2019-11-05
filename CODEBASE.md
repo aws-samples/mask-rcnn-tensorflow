@@ -75,8 +75,8 @@ Determinism can help to converge to a more stable result across different runs. 
  - Faster coco loading from https://github.com/tensorpack/tensorpack/commit/8c8de86c46cadebb1860feae832347e423f5942b
  - Improved accuracy via better anchor generation and more accurate mask paste from https://github.com/tensorpack/tensorpack/commit/141ab53cc37dce728802803747584fc0fb82863b
  - To enable our focus on throughput, we have removed some unused features from the original Tensorpack code
-  - We only support FPN-based training
-  - We do not have support for Cascade RCNN
+    - We only support FPN-based training
+    - We do not have support for Cascade RCNN
 
 # AWS specific optimizations
 
