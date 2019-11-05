@@ -2,6 +2,9 @@
 # built on base aws maskrcnn image with prebuilt tensorflow
 FROM awssamples/mask-rcnn-tensorflow:base
 
+ENV TZ=America/Los_Angeles
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 # add mask-rcnn packages
 RUN apt-get update && \
     apt-get install -y libsm6 libxext6 libxrender-dev awscli && \
