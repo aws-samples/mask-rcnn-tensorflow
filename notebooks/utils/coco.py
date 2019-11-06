@@ -29,6 +29,7 @@ class COCOSubsetter(object):
         self.images = list(self.train_dir.glob('*.jpg'))
         self.images = {int(os.path.splitext(os.path.basename(i.as_posix()))[0]): \
                            i for i in self.images}
+        self.load_annotations()
         return
 
     def random_subset(self, count):
@@ -177,7 +178,7 @@ class COCOSubsetter(object):
             shutil.copy(self.images[image],
                         dir.joinpath('train2017').joinpath(os.path.basename(self.images[image])))
         with open(dir.joinpath('annotations').joinpath('instances_train2017.json'), 'w') as anno_file:
-            anno_file.write(json.dumps(self.filter_subset(images)))
+            anno_file.write(json.dumps(self.filter_annotations(images)))
 
     def duplicate_dataset(self, count, dir):
         """
@@ -198,10 +199,11 @@ class COCOSubsetter(object):
         self.create_subset_dir(dir)
         new_annotations = self.duplicate_annotations(count)
         for image in self.images.values():
-            basename = os.path.basename(image)[0]
+            basename, _ = os.path.splitext(os.path.basename(image))
             for num in range(count):
                 new_file = basename + str(num) + '.jpg'
-                shutil.copy(self.images[image],
+                print(new_file)
+                shutil.copy(image,
                         dir.joinpath('train2017').joinpath(new_file))
         with open(dir.joinpath('annotations').joinpath('instances_train2017.json'), 'w') as outfile:
             outfile.write(json.dumps(new_annotations))
