@@ -12,17 +12,19 @@ Training on N GPUs (V100s in our experiments) with a per-gpu batch size of M = N
 
 Training converges to target accuracy for configurations from 8x1 up to 32x4 training. Training throughput is substantially improved from original Tensorpack code.
 
-A pre-built dockerfile is available in DockerHub under `fewu/mask-rcnn-tensorflow:master-latest`. It is automatically built on each commit to master.
+A pre-built dockerfile is available in DockerHub under `awssamples/mask-rcnn-tensorflow:latest`. It is automatically built on each commit to master.
 
 ### Notes
 
-- Running this codebase requires a custom TF binary - available under GitHub releases (custom ops and fix for bug introduced in TF 1.13
+- Running this codebase requires a custom TF binary - available under GitHub releases
+  - The custom_op.patch contains the git diff from our custom TF
+  - There are also pre-built TF wheels, the stable version is on TF 1.14.
 - We give some details the codebase and optimizations in `CODEBASE.md`
 
 ### To launch training
 - Data preprocessing
   - We are using COCO 2017, you can download the data from [COCO data](http://cocodataset.org/#download).
-  - The pre-trained resnet backbone can be donloaded from [ImageNet-R50-AlignPadding.npz](http://models.tensorpack.com/FasterRCNN/ImageNet-R50-AlignPadding.npz)
+  - The pre-trained resnet backbone can be downloaded from [ImageNet-R50-AlignPadding.npz](http://models.tensorpack.com/FasterRCNN/ImageNet-R50-AlignPadding.npz)
   - The file folder needs to have the following directory structure:
   ```
   data/
@@ -43,8 +45,11 @@ A pre-built dockerfile is available in DockerHub under `fewu/mask-rcnn-tensorflo
   - If you want to use EKS, you also need to create the a FSx filesystem
     - You don't need to link your S3 bucket if you have followed the previous steps
     - You need to change the FSx filesystem id in [pv-fsx](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/infra/eks/fsx/pv-fsx.yaml) file.
-- Container is recommended for training
-  - To train with docker, refer to [Docker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/docker)
+- Container is highly recommended for training
+  - If you want to build your own image, please refer to our [Dockerfile](https://github.com/aws-samples/mask-rcnn-tensorflow/blob/master/Dockerfile). Please note that you need to rebuild Tensorflow when building the docker image, it is time-consuming.
+  - Alternatively, you can use our pre-built docker image: `fewu/mask-rcnn-tensorflow:master-latest`.
+- To run on AWS
+  - To train with docker on EC2 (best performance), refer to [Docker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/docker)
   - To train with Amazon EKS, refer to [EKS](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/eks)
   - To train with Amazon SageMaker, refer to [SageMaker](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/master/infra/sm)
 
