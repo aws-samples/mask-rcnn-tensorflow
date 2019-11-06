@@ -96,10 +96,10 @@ Our binding script ([P3](https://github.com/aws-samples/mask-rcnn-tensorflow/blo
 
 # TODO
 
-## Tensorpack changes since fork we may want to port
-- Port TensorSpec changes, replacing tf.placeholder
-- Change to L1 loss? - https://github.com/tensorpack/tensorpack/commit/d263818b8fe8d8e096c4826dc5f2432901c5a894#diff-75814de28422d125213d581d1a36d92a
+- Tensorpack changes since fork we may want to port
+    - Port TensorSpec changes, replacing tf.placeholder
+    - Change to L1 loss? - https://github.com/tensorpack/tensorpack/commit/d263818b8fe8d8e096c4826dc5f2432901c5a894#diff-75814de28422d125213d581d1a36d92a
 
-## Fully determinism
+- Fully determinism
 
-## Support for TF2.0
+- Support for TF2.0
