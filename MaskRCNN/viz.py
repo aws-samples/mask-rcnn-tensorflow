@@ -11,6 +11,8 @@ from tensorpack.utils.palette import PALETTE_RGB
 
 from config import config as cfg
 from utils.np_box_ops import iou as np_iou
+from eval import DetectionResult
+import cv2
 
 
 def draw_annotation(img, boxes, klass, is_crowd=None):
@@ -31,7 +33,7 @@ def draw_annotation(img, boxes, klass, is_crowd=None):
     return img
 
 
-def draw_proposal_recall(img, proposals, proposal_scores, gt_boxes):
+def draw_proposal_recall(img, proposals, proposal_scores, gt_boxes, top=3):
     """
     Draw top3 proposals for each gt.
     Args:
@@ -41,7 +43,7 @@ def draw_proposal_recall(img, proposals, proposal_scores, gt_boxes):
     """
     box_ious = np_iou(gt_boxes, proposals)    # ng x np
     box_ious_argsort = np.argsort(-box_ious, axis=1)
-    good_proposals_ind = box_ious_argsort[:, :3]   # for each gt, find 3 best proposals
+    good_proposals_ind = box_ious_argsort[:, :top]   # for each gt, find 3 best proposals
     good_proposals_ind = np.unique(good_proposals_ind.ravel())
 
     proposals = proposals[good_proposals_ind, :]
@@ -85,6 +87,30 @@ def draw_final_outputs(img, results):
     return ret
 
 
+def draw_outputs(img, final_boxes, final_scores, final_labels, threshold=0.8):
+    """
+    Args:
+        results: [DetectionResult]
+    """
+    results = [DetectionResult(*args) for args in
+                       zip(final_boxes, final_scores, final_labels,
+                           [None] * len(final_labels)) if args[1]>threshold]
+    if len(results) == 0:
+        return img
+
+    tags = []
+    for r in results:
+        tags.append(
+            "{},{:.2f}".format(cfg.DATA.CLASS_NAMES[r.class_id], r.score))
+    boxes = np.asarray([r.box for r in results])
+    ret = viz.draw_boxes(img, boxes, tags)
+
+    for r in results:
+        if r.mask is not None:
+            ret = draw_mask(ret, r.mask)
+    return ret
+
+
 def draw_mask(im, mask, alpha=0.5, color=None):
     """
     Overlay a mask on top of the image.
@@ -100,3 +126,31 @@ def draw_mask(im, mask, alpha=0.5, color=None):
                   im * (1 - alpha) + color * alpha, im)
     im = im.astype('uint8')
     return im
+
+
+def get_mask(img, box, mask, threshold=.5):
+    box = box.astype(int)
+    color = PALETTE_RGB[np.random.choice(len(PALETTE_RGB))][::-1]
+    a_mask = np.stack([(cv2.resize(mask, (box[2]-box[0], box[3]-box[1])) > threshold).astype(np.int8)]*3, axis=2)
+    sub_image = img[box[1]:box[3],box[0]:box[2],:].astype(np.uint8)
+    sub_image = np.where(a_mask==1, sub_image * (1 - 0.5) + color * 0.5, sub_image)
+    new_image = img.copy()
+    new_image[box[1]:box[3],box[0]:box[2],:] = sub_image
+    return new_image
+
+
+def apply_masks(img, boxes, masks, scores, score_threshold=.7, mask_threshold=0.5):
+    image = img.copy()
+    for i,j,k in zip(boxes, masks, scores):
+        if k>= score_threshold:
+            image = get_mask(image, i, j, mask_threshold)
+    return image
+
+
+def gt_mask(img, masks):
+    new_image = img.copy()
+    for mask in masks:
+        color = PALETTE_RGB[np.random.choice(len(PALETTE_RGB))][::-1]
+        a_mask = np.stack([mask.astype(np.int8)]*3, axis=2)
+        new_image = np.where(a_mask==1, new_image * (1 - 0.5) + color * 0.5, new_image)
+    return new_image

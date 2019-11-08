@@ -66,16 +66,30 @@ def do_visualize(model, model_path, nr_visualize=100, output_dir='output'):
             orig_shape = img.shape[:2]
             rpn_boxes, rpn_scores, all_scores, \
                 final_boxes, final_scores, final_labels = pred(np.expand_dims(img, axis=0), 
-                                                               np.stack([orig_shape,
-                                                                         orig_shape,
-                                                                         orig_shape], axis=1),
+                                                               np.expand_dims(np.array(img.shape), axis=0),
                                                                np.expand_dims(gt_boxes, axis=0), 
                                                                np.expand_dims(gt_labels, axis=0))
 
             # draw groundtruth boxes
             gt_viz = draw_annotation(img, gt_boxes, gt_labels)
             # draw best proposals for each groundtruth, to show recall
+            # custom op creates different shape for boxes, convert back to original
+            #rpn_boxes = np.array([i[1:][[1,0,3,2]] for i in rpn_boxes])
             rpn_boxes = np.array([i[1:] for i in rpn_boxes])
+            #new_boxes = []
+            #for box in rpn_boxes:
+            #    if box[2]>img.shape[1]:
+            #        box[2]=img.shape[1]
+            #    new_boxes.append(box)
+            #rpn_boxes = np.array(new_boxes)
+            #np.save('/data/final_boxes', final_boxes)
+            #new_boxes = []
+            #for box in final_boxes:
+            #    if box[2]>img.shape[1]:
+            #        box[2]=img.shape[1]
+            #    new_boxes.append(box)
+            #final_boxes = np.array(new_boxes)
+            #final_boxes = np.array([i[[1,0,3,2]] for i in final_boxes])
             proposal_viz, good_proposals_ind = draw_proposal_recall(img, rpn_boxes, rpn_scores, gt_boxes)
             # draw the scores for the above proposals
             score_viz = draw_predictions(img, rpn_boxes[good_proposals_ind], all_scores[good_proposals_ind])
@@ -83,7 +97,7 @@ def do_visualize(model, model_path, nr_visualize=100, output_dir='output'):
             results = [DetectionResult(*args) for args in
                        zip(final_boxes, final_scores, final_labels,
                            [None] * len(final_labels))]
-            #final_viz = draw_final_outputs(img, results)
+            final_viz = draw_final_outputs(img, results)
             
 
             viz = tpviz.stack_patches([
