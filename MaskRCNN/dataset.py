@@ -248,6 +248,22 @@ class DetectionDataset(object):
             id (str): an id for the image. The inference results will be stored with this id.
         """
         return COCODetection.load_many(cfg.DATA.BASEDIR, name, add_gt=False)
+    
+    def load_viz_roidbs(self, name):
+        """
+        Args:
+            name (str): name of one inference dataset, e.g. 'minival2014'
+
+        Returns:
+            roidbs (list[dict]):
+
+            Each dict corresponds to one image to run inference on. The
+            following keys in the dict are expected:
+
+            file_name (str): full path to the image
+            id (str): an id for the image. The inference results will be stored with this id.
+        """
+        return COCODetection.load_many(cfg.DATA.BASEDIR, name, add_gt=True, add_mask=cfg.MODE_MASK)
 
     def eval_or_save_inference_results(self, results, dataset, output=None):
         """

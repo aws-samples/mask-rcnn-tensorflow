@@ -202,7 +202,6 @@ class COCOSubsetter(object):
             basename, _ = os.path.splitext(os.path.basename(image))
             for num in range(count):
                 new_file = basename + str(num) + '.jpg'
-                print(new_file)
                 shutil.copy(image,
                         dir.joinpath('train2017').joinpath(new_file))
         with open(dir.joinpath('annotations').joinpath('instances_train2017.json'), 'w') as outfile:
