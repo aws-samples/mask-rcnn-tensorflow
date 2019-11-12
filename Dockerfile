@@ -1,27 +1,13 @@
 # NGC based docker container with custom TF ops compiled for Intel Sandy Bridge and Nvidia V100
-# base image from Nvidia Tensowflow docker image
-FROM nvcr.io/nvidia/tensorflow:19.09-py3
+# built on base aws maskrcnn image with prebuilt tensorflow
+FROM awssamples/mask-rcnn-tensorflow:base
 
-WORKDIR /opt/tensorflow
-
-# download patch for custom tensorflow functions
-RUN cd tensorflow-source && \
-	wget https://github.com/aws-samples/mask-rcnn-tensorflow/releases/download/v0.0.0/SizeFix.patch && \
-	patch -p1 < SizeFix.patch && \
-	cd ..
-
-# modify nvidia build script to optimize for P3 instances
-RUN awk 'NR==59 {$0="export TF_CUDA_COMPUTE_CAPABILITIES=\"7.0\""} { print }' nvbuild.sh > nvbuild_1.sh && \
-	awk 'NR==62 {$0="export CC_OPT_FLAGS=\"-march=native\""} { print }' nvbuild_1.sh > nvbuild_new.sh && \
-	rm nvbuild_1.sh
-
-# run tensorflow build
-RUN chmod +x nvbuild_new.sh
-RUN ./nvbuild_new.sh --python3.6
+ENV TZ=America/Los_Angeles
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # add mask-rcnn packages
 RUN apt-get update && \
-    apt-get install -y libsm6 libxext6 libxrender-dev && \
+    apt-get install -y libsm6 libxext6 libxrender-dev awscli && \
     pip install opencv-python
 
 RUN pip uninstall -y pycocotools && \

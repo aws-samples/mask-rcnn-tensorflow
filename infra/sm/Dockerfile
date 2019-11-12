@@ -32,15 +32,30 @@ RUN mkdir -p /root/.ssh/ && \
 
 
 RUN pip install Cython
-RUN pip install ujson opencv-python pycocotools matplotlib
+RUN pip install ujson opencv-python matplotlib
 RUN pip install --ignore-installed numpy==1.16.2
+RUN pip install pybind11
 
-
-# TODO: Do I really need this now that we are using the DL container?
-ARG CACHEBUST=1
-ARG BRANCH_NAME
+# add custom nvidia coco tools
+# need to be modified for pybind11 header files
+RUN git clone https://github.com/NVIDIA/cocoapi && \
+    cd cocoapi/PythonAPI && \
+    make install
 
 RUN pip install mpi4py
+RUN pip install numba
 
 # For Sagemaker
 RUN pip install sagemaker-containers
+
+# Copies the training code inside the container
+COPY run_mpi.py /opt/ml/code/run_mpi.py
+COPY run.sh /opt/ml/code/run.sh
+RUN chmod +x /opt/ml/code/run.sh
+
+RUN git clone https://github.com/aws-samples/mask-rcnn-tensorflow /opt/ml/code/mask-rcnn-tensorflow
+RUN chmod -R +w  /opt/ml/code/mask-rcnn-tensorflow
+RUN pip install --ignore-installed -e  /opt/ml/code/mask-rcnn-tensorflow
+
+# Defines train.py as script entry point
+ENV SAGEMAKER_PROGRAM run_mpi.py

@@ -62,7 +62,7 @@
     - Check to see the persistent-volume was successfully created by executing: `kubectl get pv`
     - Execute: `kubectl apply -f fsx/pvc-fsx.yaml` to create an EKS persistent-volume-claim
 - Stage data on fsx
-    - Customize `fsx/tage-data.yaml` with image name and location of data on s3
+    - Customize `fsx/stage-data.yaml` with image name and location of data on s3
     - Run `kubectl apply -f fsx/stage-data.yaml`
     - Confirm that it worked with  `kubectl apply -f fsx/attach-pvc-2.yaml` and `kubectl exec attach-pvc-2 -it -- /bin/bash`
     - To clean up: `kubectl delete pod stage-data`. It can be helpful to leave the `attach-pvc-2` pod running to view the fsx contents (e.g. experiment results) later.

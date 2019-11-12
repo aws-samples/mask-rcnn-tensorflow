@@ -5,18 +5,19 @@ maskrcnn:
   experiment_group: default # For organizing result dirs.
   gpus: 8
   batch_size_per_gpu: 4
-  image: fewu/mask-rcnn-tensorflow:master-latest # image URL from ECR or DockerHub
+  image: awssamples/mask-rcnn-tensorflow:dlc # image URL from ECR or DockerHub
   train_script: /mask-rcnn-tensorflow/MaskRCNN/train.py
   fp_16: 1 # TODO: Setting this to 0 does not disable FP16, it just disables loss scaling
+  auto_tune: 0
   base_lr: 0.00125
-  warmup_lr: 0.000416667
+  warmup_lr: 0.000416666666667
   shared_fs: fsx
   data_fs: fsx
   shared_pvc: tensorpack-fsx
   data_dir: ''
   working_dir: /mask-rcnn-tensorflow
   images_per_epoch: 120000
-  lr_epoch_schedule: '[(8, 0.1), (10, 0.01), (12, None)]'
+  lr_epoch_schedule: '[(9, 0.1), (12, 0.01), (13, None)]'
   eval_period_in_epochs: 24
   data_train: '["train2017"]'
   data_val: ("val2017")
@@ -32,7 +33,8 @@ maskrcnn:
   nccl_socket_ifname: ^lo,docker0
   nccl_min_rings: 8
   nccl_debug: INFO
-  bbox_reg_weights: '[10., 10., 5., 5.]'
+  bbox_reg_weights: '[20., 20., 10., 10.]'
   result_score_thresh: 0.05
   gpus_per_node: 8
+  slow_accurate_mask: 'False'
   gradient_clip: 0

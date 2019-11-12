@@ -50,7 +50,7 @@ $(aws ecr get-login --region ${region} --no-include-email)
 echo "Building docker image mask-rcnn-tensorflow"
 echo ""
 
-docker build  -t ${image} -f Dockerfile_sm . --build-arg CACHEBUST=$(date +%s) \
+docker build  -t ${image} -f Dockerfile . --build-arg CACHEBUST=$(date +%s) \
 				--build-arg AWS_ACCESS_KEY_ID \
 				--build-arg AWS_SECRET_ACCESS_KEY \
 
