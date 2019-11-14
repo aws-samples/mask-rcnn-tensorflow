@@ -24,4 +24,17 @@ http://0.0.0.0:8888/?token=d4414589af37ed69b1efce555c8eddc3139e5b3baaa4ff05 :: /
 Copy the token portion ```d4414589af37ed69b1efce555c8eddc3139e5b3baaa4ff05``` and go to ```localhost:8890``` in your browser.
 
 From the Jupyter homepage, you can browse files within the container, upload and download files, create a new notebook, or start a terminal from within the container.
-```
+
+Included are three notebooks for various model functionality.
+
+#### coco_inspection
+An overview of the coco datasets and tools for understanding how the data is constructed, and tools for visualizing and manipulating COCO data. 
+
+- Pycocotools: a set of tools developed by the COCO team for loading and visualizing COCO data
+- Cocosubsetter: A small tool developed for these notebooks that can subset COCO data for model debugging
+
+#### tensor_inspection
+Often when training a model it is useful to see what individual tensors in the graph are doing. This can be tricky with Tensorpack, so we include a notebook that covers how to output, store, and analyze specific tensors at runtime.
+
+#### visualization
+The notebook allows the user to see what their model is finding in the images, and compare their performance to the ground truth in the COCO data. Also allows users to load their own images.
