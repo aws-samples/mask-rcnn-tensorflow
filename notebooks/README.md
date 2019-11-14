@@ -2,7 +2,7 @@
 
 These notebooks are designed to be used within the mask r-cnn docker container on a P3 EC2 instance. After starting an instance, get the public IP address, and ssh from your terminal using
 
-```ssh ~/your/pem/file localhost:8890:localhost:8888 ubuntu@[ip-address]```
+```ssh ~/your/pem/file -L localhost:8890:localhost:8888 ubuntu@[ip-address]```
 
 This will ssh into your instance, while forwarding whatever is running on ports 8888 and 6006 in your instance to ports 8890 and 6008 on your local machine.
 
