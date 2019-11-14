@@ -1,6 +1,6 @@
 # Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-# !/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # File: train.py
 
@@ -74,22 +74,7 @@ def do_visualize(model, model_path, nr_visualize=100, output_dir='output'):
             gt_viz = draw_annotation(img, gt_boxes, gt_labels)
             # draw best proposals for each groundtruth, to show recall
             # custom op creates different shape for boxes, convert back to original
-            #rpn_boxes = np.array([i[1:][[1,0,3,2]] for i in rpn_boxes])
             rpn_boxes = np.array([i[1:] for i in rpn_boxes])
-            #new_boxes = []
-            #for box in rpn_boxes:
-            #    if box[2]>img.shape[1]:
-            #        box[2]=img.shape[1]
-            #    new_boxes.append(box)
-            #rpn_boxes = np.array(new_boxes)
-            #np.save('/data/final_boxes', final_boxes)
-            #new_boxes = []
-            #for box in final_boxes:
-            #    if box[2]>img.shape[1]:
-            #        box[2]=img.shape[1]
-            #    new_boxes.append(box)
-            #final_boxes = np.array(new_boxes)
-            #final_boxes = np.array([i[[1,0,3,2]] for i in final_boxes])
             proposal_viz, good_proposals_ind = draw_proposal_recall(img, rpn_boxes, rpn_scores, gt_boxes)
             # draw the scores for the above proposals
             score_viz = draw_predictions(img, rpn_boxes[good_proposals_ind], all_scores[good_proposals_ind])
