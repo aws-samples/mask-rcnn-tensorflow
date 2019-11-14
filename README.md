@@ -72,6 +72,7 @@ The result was running on P3dn.24xl instances using EKS.
 | 16x4 | 5.60h | 38.44% | 35.18% |
 | 32x4 | 3.33h | 38.33% | 35.12% |
 
+### Example output
 <img src="notebooks/assets/example_image.png" style="width: 800px;">
 
 ### Tensorpack fork point
