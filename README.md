@@ -2,6 +2,7 @@
 
 Performance focused implementation of Mask RCNN based on the [Tensorpack implementation](https://github.com/tensorpack/tensorpack/tree/master/examples/FasterRCNN).
 The original paper: [Mask R-CNN](https://arxiv.org/abs/1703.06870)
+
 ### Overview
 
 This implementation of Mask RCNN is focused on increasing training throughput without sacrificing any accuracy. We do this by training with a batch size > 1 per GPU using FP16 and two custom TF ops.
@@ -70,6 +71,9 @@ The result was running on P3dn.24xl instances using EKS.
 | 8x4 | 9.78h | 38.25% | 35.08% |
 | 16x4 | 5.60h | 38.44% | 35.18% |
 | 32x4 | 3.33h | 38.33% | 35.12% |
+
+### Example output
+<img src="notebooks/assets/example_image.png" style="width: 800px;">
 
 ### Tensorpack fork point
 

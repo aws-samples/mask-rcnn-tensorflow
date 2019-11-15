@@ -11,7 +11,12 @@ RUN apt-get update && \
     pip install opencv-python
 
 RUN pip uninstall -y pycocotools && \
-    pip install pybind11
+    pip install pybind11 && \
+    pip install scikit-image
+    
+RUN wget https://github.com/aws-samples/mask-rcnn-tensorflow/releases/download/v0.0.0/example_log.tar.gz && \
+    tar -xzf example_log.tar.gz example_log
+    
 
 # add custom nvidia coco tools
 # need to be modified for pybind11 header files

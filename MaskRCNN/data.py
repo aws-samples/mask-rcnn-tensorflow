@@ -478,6 +478,115 @@ def get_train_dataflow():
     return ds
 
 
+def get_viz_dataflow(name):
+    """
+    Return a training dataflow. Each datapoint consists of the following:
+
+    An image: (h, w, 3),
+
+    1 or more pairs of (anchor_labels, anchor_boxes):
+    anchor_labels: (h', w', NA)
+    anchor_boxes: (h', w', NA, 4)
+
+    gt_boxes: (N, 4)
+    gt_labels: (N,)
+
+    If MODE_MASK, gt_masks: (N, h, w)
+    """
+
+    roidbs = DetectionDataset().load_viz_roidbs(name)
+    print_class_histogram(roidbs)
+
+    # Valid training images should have at least one fg box.
+    # But this filter shall not be applied for testing.
+    num = len(roidbs)
+    roidbs = list(filter(lambda img: len(img['boxes'][img['is_crowd'] == 0]) > 0, roidbs))
+    logger.info("Filtered {} images which contain no non-crowd groudtruth boxes. Total #images for training: {}".format(
+        num - len(roidbs), len(roidbs)))
+
+    ds = DataFromList(roidbs, shuffle=True)
+
+    aug = imgaug.AugmentorList(
+        [CustomResize(cfg.PREPROC.TRAIN_SHORT_EDGE_SIZE, cfg.PREPROC.MAX_SIZE),
+         imgaug.Flip(horiz=True)])
+
+    def preprocess(roidb):
+        fname, boxes, klass, is_crowd = roidb['file_name'], roidb['boxes'], roidb['class'], roidb['is_crowd']
+        boxes = np.copy(boxes)
+        im = cv2.imread(fname, cv2.IMREAD_COLOR)
+        assert im is not None, fname
+        im = im.astype('float32')
+        # assume floatbox as input
+        assert boxes.dtype == np.float32, "Loader has to return floating point boxes!"
+
+        # augmentation:
+        im, params = aug.augment_return_params(im)
+        points = box_to_point8(boxes)
+        points = aug.augment_coords(points, params)
+        boxes = point8_to_box(points)
+        assert np.min(np_area(boxes)) > 0, "Some boxes have zero area!"
+
+        ret = {'images': im}
+        # rpn anchor:
+        try:
+            if cfg.MODE_FPN:
+                multilevel_anchor_inputs = get_multilevel_rpn_anchor_input(im, boxes, is_crowd)
+                for i, (anchor_labels, anchor_boxes) in enumerate(multilevel_anchor_inputs):
+                    ret['anchor_labels_lvl{}'.format(i + 2)] = anchor_labels
+                    ret['anchor_boxes_lvl{}'.format(i + 2)] = anchor_boxes
+            else:
+                # anchor_labels, anchor_boxes
+                ret['anchor_labels'], ret['anchor_boxes'] = get_rpn_anchor_input(im, boxes, is_crowd)
+
+            boxes = boxes[is_crowd == 0]    # skip crowd boxes in training target
+            klass = klass[is_crowd == 0]
+            ret['gt_boxes'] = boxes
+            ret['gt_labels'] = klass
+            if not len(boxes):
+                raise MalformedData("No valid gt_boxes!")
+        except MalformedData as e:
+            log_once("Input {} is filtered for training: {}".format(fname, str(e)), 'warn')
+            return None
+
+        if cfg.MODE_MASK:
+            # augmentation will modify the polys in-place
+            segmentation = copy.deepcopy(roidb['segmentation'])
+            segmentation = [segmentation[k] for k in range(len(segmentation)) if not is_crowd[k]]
+            assert len(segmentation) == len(boxes)
+
+            # Apply augmentation on polygon coordinates.
+            # And produce one image-sized binary mask per box.
+            masks = []
+            for polys in segmentation:
+                polys = [aug.augment_coords(p, params) for p in polys]
+                masks.append(segmentation_to_mask(polys, im.shape[0], im.shape[1]))
+            masks = np.asarray(masks, dtype='uint8')    # values in {0, 1}
+            ret['gt_masks'] = masks
+
+            # from viz import draw_annotation, draw_mask
+            # viz = draw_annotation(im, boxes, klass)
+            # for mask in masks:
+            #     viz = draw_mask(viz, mask)
+            # tpviz.interactive_imshow(viz)
+
+        # for k, v in ret.items():
+        #    print("key", k)
+        #    if type(v) == np.ndarray:
+        #        print("val", v.shape)
+        #    else:
+        #        print("val", v)
+
+        return ret
+
+    if cfg.TRAINER == 'horovod':
+        #ds = MapData(ds, preprocess)
+        ds = MultiThreadMapData(ds, 5, preprocess)
+        # MPI does not like fork()
+    else:
+        ds = MultiProcessMapDataZMQ(ds, 10, preprocess)
+    return ds
+
+
 def get_batch_train_dataflow(batch_size):
     """
     Return a training dataflow. Each datapoint consists of the following:
@@ -773,7 +882,7 @@ def get_eval_dataflow(name, shard=0, num_shards=1):
     img_range = (shard * img_per_shard, (shard + 1) * img_per_shard if shard + 1 < num_shards else num_imgs)
 
     # no filter for training
-    ds = DataFromListOfDict(roidbs[img_range[0]: img_range[1]], ['file_name', 'id'])
+    ds = DataFromListOfDict(roidbs[img_range[0]: img_range[1]], ['file_name', 'image_id'])
 
     def f(fname):
         im = cv2.imread(fname, cv2.IMREAD_COLOR)

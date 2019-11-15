@@ -5,6 +5,7 @@
 
 
 import tensorflow as tf
+from contextlib import suppress
 
 from ..tfutils.common import get_tf_version_tuple
 from ..utils.argtools import get_data_format, shape2d, shape4d
