@@ -8,15 +8,15 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # add mask-rcnn packages
 RUN apt-get update && \
     apt-get install -y libsm6 libxext6 libxrender-dev awscli && \
-    pip install opencv-python
+    pip install opencv-python==4.1.1.26
 
 RUN pip uninstall -y pycocotools && \
     pip install pybind11 && \
     pip install scikit-image
-    
+
 RUN wget https://github.com/aws-samples/mask-rcnn-tensorflow/releases/download/v0.0.0/example_log.tar.gz && \
     tar -xzf example_log.tar.gz example_log
-    
+
 
 # add custom nvidia coco tools
 # need to be modified for pybind11 header files
