@@ -132,6 +132,8 @@ class COCOSubsetter(object):
                 image_copy['file_name'] = "{}{}{}".format(filename[0],
                                                           str(num),
                                                           filename[1])
+                image_id = int("{}{}".format(image_copy['id'], str(num)))
+                image_copy['id']=image_id
                 new_images.append(image_copy)
         return self._create_new_annotations(new_annotations, new_images)
 
