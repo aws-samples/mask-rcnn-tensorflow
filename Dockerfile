@@ -47,5 +47,6 @@ RUN apt update && \
 RUN mkdir -p /var/run/sshd
 
 RUN pip uninstall -y numpy
+RUN pip uninstall -y numpy
 
-RUN pip install --ignore-installed numpy==1.16.2
+RUN pip install numpy==1.16.2
