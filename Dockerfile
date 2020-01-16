@@ -31,9 +31,6 @@ RUN git clone https://github.com/NVIDIA/cocoapi && \
     mv pycocotools/ext3.cpp pycocotools/ext.cpp && \
     make install
 
-RUN pip uninstall -y numpy
-
-RUN pip install --ignore-installed numpy==1.16.2
 
 WORKDIR /
 
@@ -48,3 +45,7 @@ RUN apt update && \
     apt install -y openssh-server
 
 RUN mkdir -p /var/run/sshd
+
+RUN pip uninstall -y numpy
+
+RUN pip install --ignore-installed numpy==1.16.2
