@@ -44,8 +44,7 @@ estimator = Estimator(image_name, role=sagemaker_iam_role, output_path=output_pa
                       sagemaker_session=sess,
                       train_volume_size=200,
                       base_job_name=job_name,
-                      subnets=['subnet-21ac2f2e'],
-                      security_group_ids=['sg-a21b02eb'],
+                      
                       hyperparameters=hyperparams)
 
 estimator.fit({'train':lustre_input}, wait=False)
