@@ -207,7 +207,7 @@ def generate_fpn_proposals(multilevel_anchor_boxes,
                 #
                 # roi: (# boxes for a single level) x 5, the 5 colunms arranged as: batch_index, x_1, y_1, x_2, y_2
                 # rois_probs: 1-D, # boxes for a single level
-                rois, rois_probs = tf.generate_bounding_box_proposals(scores,
+                rois, rois_probs = tf.generate_bounding_box_proposals_v2(scores,
                                                                    bbox_deltas,
                                                                    im_info,
                                                                    single_level_anchor_boxes,
@@ -284,7 +284,7 @@ def generate_fpn_proposals_topk_per_image(multilevel_anchor_boxes,
                     single_level_anchor_boxes = tf.reshape(single_level_anchor_boxes, (-1, 4))
 
                     # https://caffe2.ai/docs/operators-catalogue.html#generateproposals
-                    rois, rois_probs = tf.generate_bounding_box_proposals(scores,
+                    rois, rois_probs = tf.generate_bounding_box_proposals_v2(scores,
                                                                           bbox_deltas,
                                                                           im_info,
                                                                           single_level_anchor_boxes,
