@@ -9,6 +9,7 @@ from tensorpack.models import Conv2D, layer_register
 from tensorpack.tfutils.argscope import argscope
 from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope, under_name_scope
 from tensorpack.tfutils.summary import add_moving_summary
+from tensorpack.tfutils.common import get_tf_version_tuple
 
 from config import config as cfg
 from model_box import clip_boxes
@@ -207,7 +208,10 @@ def generate_fpn_proposals(multilevel_anchor_boxes,
                 #
                 # roi: (# boxes for a single level) x 5, the 5 colunms arranged as: batch_index, x_1, y_1, x_2, y_2
                 # rois_probs: 1-D, # boxes for a single level
-                rois, rois_probs = tf.generate_bounding_box_proposals_v2(scores,
+                # name change in tf 1.15
+                generate_bounding_box_proposals = tf.generate_bounding_box_proposals_v2 if get_tf_version_tuple()==(1,15) \
+                                                    else tf.generate_bounding_box_proposals
+                rois, rois_probs = generate_bounding_box_proposals(scores,
                                                                    bbox_deltas,
                                                                    im_info,
                                                                    single_level_anchor_boxes,
@@ -284,7 +288,9 @@ def generate_fpn_proposals_topk_per_image(multilevel_anchor_boxes,
                     single_level_anchor_boxes = tf.reshape(single_level_anchor_boxes, (-1, 4))
 
                     # https://caffe2.ai/docs/operators-catalogue.html#generateproposals
-                    rois, rois_probs = tf.generate_bounding_box_proposals_v2(scores,
+                    generate_bounding_box_proposals = tf.generate_bounding_box_proposals_v2 if get_tf_version_tuple()==(1,15) \
+                                                    else tf.generate_bounding_box_proposals
+                    rois, rois_probs = generate_bounding_box_proposals(scores,
                                                                           bbox_deltas,
                                                                           im_info,
                                                                           single_level_anchor_boxes,
