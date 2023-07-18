@@ -1,0 +1,62 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "docker-build",
+			"label": "docker-build",
+			"dockerBuild": {
+				"tag": "mask-rcnn-tensorflow:latest",
+				"dockerfile": "${workspaceFolder}/Dockerfile",
+				"context": "${workspaceFolder}",
+				"pull": true
+			}
+		},
+		{
+			"type": "docker-run",
+			"label": "docker-run: debug",
+			"dependsOn": [
+				"docker-build"
+			],
+			"python": {
+				"file": "MaskRCNN/train.py"
+			},
+			"dockerRun": {
+				"image": "mask-rcnn-tensorflow:latest",
+				"customOptions": "--gpus=all",
+				"remove": true,
+				"volumes": [
+					{
+						"localPath": "/home/ubuntu/efs/mask-rcnn/data",
+						"containerPath": "/data"
+					},
+					{
+						"localPath": "/home/ubuntu/efs/logs",
+						"containerPath": "/logs"
+					}
+				]
+			}
+		},
+		{
+			"type": "docker-run",
+			"label": "docker-run: notebooks",
+			"dependsOn": ["docker-build"],
+			"dockerRun": {
+				"image": "mask-rcnn-tensorflow:latest",
+				"customOptions": "--gpus=all",
+				"remove": true,
+				"command": "nohup jupyter-lab --no-browser --ip=0.0.0.0 --allow-root",
+				"ports": [ {"hostPort": 8888, "containerPort": 8888, "protocol": "tcp"}],
+				"volumes": [
+					{
+						"localPath": "/home/ubuntu/efs/mask-rcnn/data",
+						"containerPath": "/data"
+					},
+					{
+						"localPath": "/home/ubuntu/efs/logs",
+						"containerPath": "/logs"
+					}
+				]
+			}
+		}
+	]
+}
