@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: mnist.py
 
@@ -7,7 +5,6 @@
 import gzip
 import numpy
 import os
-from six.moves import range
 
 from ...utils import logger
 from ...utils.fs import download, get_dataset_path
@@ -135,7 +132,7 @@ class FashionMnist(Mnist):
 if __name__ == '__main__':
     ds = Mnist('train')
     ds.reset_state()
-    for (img, label) in ds:
+    for _ in ds:
         from IPython import embed
         embed()
         break

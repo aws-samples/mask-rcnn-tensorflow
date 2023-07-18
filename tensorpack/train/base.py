@@ -1,15 +1,12 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: base.py
 
 import copy
 import time
 import weakref
-import six
 import tensorflow as tf
-from six.moves import range
 
+from ..compat import tfv1
 from ..callbacks import Callback, Callbacks, Monitors, MonitorBase
 from ..callbacks.steps import MaintainStepCounter
 from ..tfutils import get_global_step_value
@@ -106,12 +103,12 @@ class Trainer(object):
     The ``tf.Session`` object the trainer is using.
     Available after :meth:`initialize()`.
 
-    Using ``trainer.sess.run`` to evaluate tensors that depend on the inputs
-    can lead to unexpected effect:
+    Using ``trainer.sess.run`` to evaluate tensors that depend on the training
+    ``InputSource`` may have unexpected effect:
 
     For example, if you use ``trainer.sess.run`` to evaluate a tensor that depends on the
     inputs coming from a ``StagingArea``,
-    this will take a datapoint from the ``StagingArea``, making the ``StagingArea`` empty, and as a result
+    it will take a datapoint from the ``StagingArea``, making the ``StagingArea`` empty, and as a result
     make the training hang.
     """
 
@@ -129,7 +126,7 @@ class Trainer(object):
     2. Increase the global_step
     3. Evaluate some summaries
 
-    Typically you do not want to use ``hooked_sess.run`` in callbacks,
+    Typically you **should not** use ``hooked_sess.run`` in callbacks,
     because it is for the "training iteration". If you just want to evaluate
     some tensors, use ``sess.run`` if the tensors does not depend on the inputs,
     or more generally, use `before_run/after_run` to evaluate the tensors **along with**
@@ -224,7 +221,7 @@ class Trainer(object):
             session_creator (tf.train.SessionCreator):
             session_init (sessinit.SessionInit):
         """
-        assert isinstance(session_creator, tf.train.SessionCreator), session_creator
+        assert isinstance(session_creator, tfv1.train.SessionCreator), session_creator
         assert isinstance(session_init, SessionInit), session_init
         session_init._setup_graph()
 
@@ -252,7 +249,7 @@ class Trainer(object):
         which can be useful when the training is not done by a single `train_op`.
         """
         hooks = self._callbacks.get_hooks()
-        self.hooked_sess = tf.train.MonitoredSession(
+        self.hooked_sess = tfv1.train.MonitoredSession(
             session_creator=ReuseSessionCreator(self.sess), hooks=hooks)
 
     @call_only_once
@@ -292,6 +289,9 @@ class Trainer(object):
                 logger.info("Training was stopped by exception {}.".format(str(e)))
             except KeyboardInterrupt:
                 logger.info("Detected Ctrl-C and exiting main loop.")
+                raise
+            except Exception:
+                logger.error("Training failed at global_step=", self.loop.global_step)
                 raise
             finally:
                 self._callbacks.after_train()
@@ -361,11 +361,10 @@ def _get_property(name):
     """
     ret = property(
         lambda self: getattr(self.loop, name))
-    if six.PY3:     # __doc__ is readonly in Py2
-        try:
-            ret.__doc__ = getattr(TrainLoop, name).__doc__
-        except AttributeError:
-            pass
+    try:
+        ret.__doc__ = getattr(TrainLoop, name).__doc__
+    except AttributeError:
+        pass
     return ret
 
 

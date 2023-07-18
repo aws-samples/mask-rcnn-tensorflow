@@ -217,7 +217,6 @@ def get_all_anchors_fpn(strides=None, sizes=None, tile=True):
         foas.append(foa)
     return foas
 
-
 def get_anchor_labels(anchors, gt_boxes, crowd_boxes):
     """
     Label each anchor as fg/bg/ignore.
@@ -411,9 +410,11 @@ def get_train_dataflow():
         assert boxes.dtype == np.float32, "Loader has to return floating point boxes!"
 
         # augmentation:
-        im, params = aug.augment_return_params(im)
+        params = aug.get_transform(im)
+        im = params.apply_image(im)
         points = box_to_point8(boxes)
-        points = aug.augment_coords(points, params)
+        points = params.apply_coords(points)
+
         boxes = point8_to_box(points)
         assert np.min(np_area(boxes)) > 0, "Some boxes have zero area!"
 
@@ -449,7 +450,7 @@ def get_train_dataflow():
             # And produce one image-sized binary mask per box.
             masks = []
             for polys in segmentation:
-                polys = [aug.augment_coords(p, params) for p in polys]
+                polys = [params.apply_coords(p) for p in polys]
                 masks.append(segmentation_to_mask(polys, im.shape[0], im.shape[1]))
             masks = np.asarray(masks, dtype='uint8')    # values in {0, 1}
             ret['gt_masks'] = masks
@@ -520,9 +521,10 @@ def get_viz_dataflow(name):
         assert boxes.dtype == np.float32, "Loader has to return floating point boxes!"
 
         # augmentation:
-        im, params = aug.augment_return_params(im)
+        params = aug.get_transform(im)
+        im = params.apply_image(im)
         points = box_to_point8(boxes)
-        points = aug.augment_coords(points, params)
+        points = params.apply_coords(points)
         boxes = point8_to_box(points)
         assert np.min(np_area(boxes)) > 0, "Some boxes have zero area!"
 
@@ -558,7 +560,7 @@ def get_viz_dataflow(name):
             # And produce one image-sized binary mask per box.
             masks = []
             for polys in segmentation:
-                polys = [aug.augment_coords(p, params) for p in polys]
+                polys = [params.apply_coords(p) for p in polys]
                 masks.append(segmentation_to_mask(polys, im.shape[0], im.shape[1]))
             masks = np.asarray(masks, dtype='uint8')    # values in {0, 1}
             ret['gt_masks'] = masks
@@ -679,9 +681,10 @@ def get_batch_train_dataflow(batch_size):
             assert boxes.dtype == np.float32, "Loader has to return floating point boxes!"
 
             # augmentation:
-            im, params = aug.augment_return_params(im)
+            params = aug.get_transform(im)
+            im = params.apply_image(im)
             points = box_to_point8(boxes)
-            points = aug.augment_coords(points, params)
+            points = params.apply_coords(points)
             boxes = point8_to_box(points)
             assert np.min(np_area(boxes)) > 0, "Some boxes have zero area!"
 
@@ -717,7 +720,7 @@ def get_batch_train_dataflow(batch_size):
                 # And produce one image-sized binary mask per box.
                 masks = []
                 for polys in segmentation:
-                    polys = [aug.augment_coords(p, params) for p in polys]
+                    polys = [params.apply_coords(p) for p in polys]
                     masks.append(segmentation_to_mask(polys, im.shape[0], im.shape[1]))
                 masks = np.asarray(masks, dtype='uint8')    # values in {0, 1}
                 ret['gt_masks'] = masks

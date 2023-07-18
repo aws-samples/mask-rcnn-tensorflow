@@ -1,26 +1,39 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# File: train.py
 
 import argparse
 import itertools
 import numpy as np
 import shutil
+from MaskRCNN import utils
 import cv2
 import six
+from tensorpack.callbacks.graph import RunUpdateOps
+from tensorpack.callbacks.misc import EstimatedTimeLeft
+from tensorpack.callbacks.param import ScheduledHyperParamSetter
+
+from tensorpack.callbacks.saver import ModelSaver
+from tensorpack.callbacks.steps import ProgressBar, SessionRunTimeout
+from tensorpack.callbacks.summary import MergeAllSummaries, MovingAverageSummary
+from tensorpack.callbacks.trigger import  PeriodicCallback
+from tensorpack.input_source.input_source import QueueInput
+from tensorpack.predict.base import OfflinePredictor
+from tensorpack.predict.config import PredictConfig
+from tensorpack.predict.multigpu import MultiTowerOfflinePredictor
+from tensorpack.tfutils.sessinit import get_model_loader
+from tensorpack.train.base import StopTraining
+from tensorpack.train.config import TrainConfig
+from tensorpack.train.interface import launch_train_with_config
+from tensorpack.train.trainers import HorovodTrainer, SyncMultiGPUTrainerReplicated
+from tensorpack.utils.utils import fix_rng_seed, humanize_time_delta
 assert six.PY3, "FasterRCNN requires Python 3!"
 import tensorflow as tf
 import tqdm
 import time
-import subprocess
 import os
 
 import tensorpack.utils.viz as tpviz
 from tensorpack import *
-from tensorpack.tfutils.common import get_tf_version_tuple
-
 
 from dataset import DetectionDataset
 from config import finalize_configs, config as cfg
@@ -29,7 +42,6 @@ from eval import DetectionResult, predict_image, multithread_predict_dataflow, E
 from viz import draw_annotation, draw_final_outputs, draw_predictions, draw_proposal_recall
 from performance import ThroughputTracker, humanize_float
 from model.generalized_rcnn import ResNetFPNModel
-from tensorpack.utils import fix_rng_seed
 
 
 try:
@@ -49,8 +61,7 @@ def do_visualize(model, model_path, nr_visualize=100, output_dir='output'):
         session_init=get_model_loader(model_path),
         input_names=['images', 'orig_image_dims', 'gt_boxes', 'gt_labels'],
         output_names=[
-            'generate_{}_proposals_topk_per_image/boxes'.format('fpn' if cfg.MODE_FPN else 'rpn'),
-            'generate_{}_proposals_topk_per_image/scores'.format('fpn' if cfg.MODE_FPN else 'rpn'),
+            'generate_fpn_proposals/boxes',
             'fastrcnn_all_scores',
             'output/boxes',
             'output/scores',
@@ -64,18 +75,21 @@ def do_visualize(model, model_path, nr_visualize=100, output_dir='output'):
         for idx, dp in itertools.islice(enumerate(df), nr_visualize):
             img, gt_boxes, gt_labels = dp['images'], dp['gt_boxes'], dp['gt_labels']
             orig_shape = img.shape[:2]
-            rpn_boxes, rpn_scores, all_scores, \
+            rpn_boxes, all_scores, \
                 final_boxes, final_scores, final_labels = pred(np.expand_dims(img, axis=0), 
                                                                np.expand_dims(np.array(img.shape), axis=0),
                                                                np.expand_dims(gt_boxes, axis=0), 
                                                                np.expand_dims(gt_labels, axis=0))
 
+            rpn_boxes = rpn_boxes.reshape(-1, 4)
+            all_scores = all_scores.reshape(-1, cfg.DATA.NUM_CLASS)
+
             # draw groundtruth boxes
             gt_viz = draw_annotation(img, gt_boxes, gt_labels)
             # draw best proposals for each groundtruth, to show recall
             # custom op creates different shape for boxes, convert back to original
-            rpn_boxes = np.array([i[1:] for i in rpn_boxes])
-            proposal_viz, good_proposals_ind = draw_proposal_recall(img, rpn_boxes, rpn_scores, gt_boxes)
+            
+            proposal_viz, good_proposals_ind = draw_proposal_recall(img, rpn_boxes, gt_boxes)
             # draw the scores for the above proposals
             score_viz = draw_predictions(img, rpn_boxes[good_proposals_ind], all_scores[good_proposals_ind])
 
@@ -119,23 +133,6 @@ def do_predict(pred_func, input_file):
     logger.info("Inference output written to output.png")
     tpviz.interactive_imshow(viz)
 
-
-
-
-
-def log_launch_config(log_full_git_diff):
-    def check_and_log(cmd):
-        logger.info(cmd)
-        logger.info(subprocess.check_output(cmd, shell=True).decode("utf-8"))
-
-    check_and_log('git status') # branch and changes
-    check_and_log('git rev-parse HEAD') # commit
-    if log_full_git_diff:
-        check_and_log('git diff')
-
-    check_and_log('env')
-    check_and_log('ps -elf | grep mpirun')
-
 def call_only_once(func):
     """
     Decorate a method or property of a class, so that this method can only
@@ -143,10 +140,7 @@ def call_only_once(func):
     Calling it more than once will result in exception.
     """
     import inspect
-    if six.PY2:
-        import functools32 as functools
-    else:
-        import functools
+    import functools
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -226,8 +220,6 @@ class AsyncHorovodTrainer(HorovodTrainer):
                 self.hooked_sess.close()
 
 
-
-
 if __name__ == '__main__':
     start_time = time.time()
     parser = argparse.ArgumentParser()
@@ -240,37 +232,19 @@ if __name__ == '__main__':
                                           "This argument is the path to the input image file")
     parser.add_argument('--config', help="A list of KEY=VALUE to overwrite those defined in config.py",
                         nargs='+')
-    parser.add_argument('--fp16', help="Train in FP16", action="store_true")
     parser.add_argument('--async_eval', help="Enable async evaluation, for mlperf. Evaluation will run every epoch and training will be stopped once the target is hit", action="store_true")
     #################################################################################################################
     # Performance investigation arguments
     parser.add_argument('--throughput_log_freq', help="In perf investigation mode, code will print throughput after every throughput_log_freq steps as well as after every epoch", type=int, default=100)
     parser.add_argument('--images_per_epoch', help="Number of images in an epoch. = images_per_steps * steps_per_epoch (differs slightly from the total number of images).", type=int, default=120000)
-
-    parser.add_argument('--tfprof', help="Enable tf profiler", action="store_true")
-    parser.add_argument('--tfprof_start_step', help="Step to enable tf profiling", type=int, default=15005)
-    parser.add_argument('--tfprof_end_step', help="Step after which tf profiling will be disabled", type=int, default=15010)
-
-    parser.add_argument('--log_full_git_diff', help="Log the full git diff", action="store_false")
-
-
     #################################################################################################################
-
-
-
-
-    if get_tf_version_tuple() < (1, 6):
-        # https://github.com/tensorflow/tensorflow/issues/14657
-        logger.warn("TF<1.6 has a bug which may lead to crash in FasterRCNN if you're unlucky.")
 
     args = parser.parse_args()
     if args.config:
         cfg.update_args(args.config)
 
-    MODEL = ResNetFPNModel(args.fp16)
+    MODEL = ResNetFPNModel()
     DetectionDataset()  # initialize the config with information from our dataset
-
-
 
     if args.visualize or args.evaluate or args.predict:
         assert tf.test.is_gpu_available()
@@ -308,19 +282,19 @@ if __name__ == '__main__':
 
         if not is_horovod or hvd.rank() == 0:
             logger.set_logger_dir(args.logdir, 'd')
-            log_launch_config(args.log_full_git_diff)
 
         finalize_configs(is_training=True)
-
+        
         # Set evaluation every epoch for async eval mode
         if args.async_eval:
             cfg.TRAIN.EVAL_PERIOD = 1
 
         if cfg.TRAIN.SEED:
-            tf.set_random_seed(cfg.TRAIN.SEED)
-            fix_rng_seed(cfg.TRAIN.SEED*hvd.rank())
+            tf.random.set_seed(cfg.TRAIN.SEED)
+            if is_horovod:
+                fix_rng_seed(cfg.TRAIN.SEED*hvd.rank())
             np.random.seed(cfg.TRAIN.SEED)
-
+            
         images_per_step = cfg.TRAIN.NUM_GPUS * cfg.TRAIN.BATCH_SIZE_PER_GPU
         steps_per_epoch = args.images_per_epoch // images_per_step
         batch_size_lr_factor = images_per_step # The LR is defined for bs=1 and then scaled linearly with the batch size
@@ -365,36 +339,26 @@ if __name__ == '__main__':
             ScheduledHyperParamSetter(
                 'learning_rate', warmup_schedule, interp='linear', step_based=True),
             ScheduledHyperParamSetter('learning_rate', lr_schedule),
-            PeakMemoryTracker(),
             EstimatedTimeLeft(median=True),
             SessionRunTimeout(60000).set_chief_only(True),   # 1 minute timeout
         ]
 
         if args.async_eval:
             callbacks.extend([
-                AsyncEvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
+                AsyncEvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, cfg.TEST.BATCH_SIZE_PER_GPU)
                 for dataset in cfg.DATA.VAL
             ])
         else:
             callbacks.extend([
-                EvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, 1) #cfg.TRAIN.BATCH_SIZE_PER_GPU)
+                EvalCallback(dataset, *MODEL.get_inference_tensor_names(), args.logdir, cfg.TEST.BATCH_SIZE_PER_GPU)
                 for dataset in cfg.DATA.VAL
             ])
-
-        if not is_horovod:
-            callbacks.append(GPUUtilizationTracker())
 
         callbacks.append(ThroughputTracker(cfg.TRAIN.BATCH_SIZE_PER_GPU*cfg.TRAIN.NUM_GPUS,
                                            args.images_per_epoch,
                                            trigger_every_n_steps=args.throughput_log_freq,
                                            log_fn=logger.info))
 
-        if args.tfprof:
-            # We only get tf profiling chrome trace on rank==0
-            if hvd.rank() == 0:
-                callbacks.append(EnableCallbackIf(
-                    GraphProfiler(dump_tracing=True, dump_event=True),
-                    lambda self: self.trainer.global_step >= args.tfprof_start_step and self.trainer.global_step <= args.tfprof_end_step))
 
         if is_horovod and hvd.rank() > 0:
             session_init = None
@@ -427,8 +391,8 @@ if __name__ == '__main__':
         elif is_horovod:
             trainer = HorovodTrainer(average=True)
         else:
-            # nccl mode appears faster than cpu mode
-            trainer = SyncMultiGPUTrainerReplicated(cfg.TRAIN.NUM_GPUS, average=True, mode='nccl')
+            mode = 'nccl' if cfg.TRAIN.NUM_GPUS > 1 else 'gpu'
+            trainer = SyncMultiGPUTrainerReplicated(cfg.TRAIN.NUM_GPUS, average=True, mode=mode)
         launch_train_with_config(traincfg, trainer)
 
     training_duration_secs = time.time() - start_time

@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: shape_utils.py
 
@@ -74,7 +72,7 @@ class StaticDynamicShape(object):
 
 
 if __name__ == '__main__':
-    x = tf.placeholder(tf.float32, shape=[None, 3, None, 10])
+    x = tfv1.placeholder(tf.float32, shape=[None, 3, None, 10])
     shape = StaticDynamicShape(x)
     shape.apply(1, lambda x: x * 3)
     shape.apply(2, lambda x: x + 5)

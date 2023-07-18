@@ -1,13 +1,10 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: fc.py
 
 
 import numpy as np
-import tensorflow as tf
+from ..compat import tfv1 as tf  # this should be avoided first in model code
 
-from ..tfutils.common import get_tf_version_tuple
 from .common import VariableHolder, layer_register
 from .tflayer import convert_to_tflayer_args, rename_get_variable
 
@@ -37,7 +34,8 @@ def FullyConnected(
         bias_initializer=tf.zeros_initializer(),
         kernel_regularizer=None,
         bias_regularizer=None,
-        activity_regularizer=None):
+        activity_regularizer=None,
+        seed=None):
     """
     A wrapper around `tf.layers.Dense`.
     One difference to maintain backward-compatibility:
@@ -49,10 +47,7 @@ def FullyConnected(
     * ``b``: bias
     """
     if kernel_initializer is None:
-        if get_tf_version_tuple() <= (1, 12):
-            kernel_initializer = tf.contrib.layers.variance_scaling_initializer(2.0)
-        else:
-            kernel_initializer = tf.keras.initializers.VarianceScaling(2.0, distribution='untruncated_normal')
+        kernel_initializer = tf.keras.initializers.VarianceScaling(2.0, distribution='untruncated_normal', seed=seed)
 
     inputs = batch_flatten(inputs)
     with rename_get_variable({'kernel': 'W', 'bias': 'b'}):
@@ -66,7 +61,7 @@ def FullyConnected(
             bias_regularizer=bias_regularizer,
             activity_regularizer=activity_regularizer,
             _reuse=tf.get_variable_scope().reuse)
-        ret = layer.apply(inputs, scope=tf.get_variable_scope())
+        ret = layer(inputs, scope=tf.get_variable_scope())
         ret = tf.identity(ret, name='output')
 
     ret.variables = VariableHolder(W=layer.kernel)

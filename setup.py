@@ -1,9 +1,6 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
-import platform
 from os import path
 import setuptools
-from setuptools import setup
+from setuptools import setup, find_packages
 
 version = int(setuptools.__version__.split('.')[0])
 assert version > 30, "Tensorpack installation requires setuptools > 30"
@@ -40,26 +37,37 @@ add_git_version()
 
 setup(
     name='tensorpack',
+    author="TensorPack contributors",
+    author_email="ppwwyyxxc@gmail.com",
+    url="https://github.com/tensorpack/tensorpack",
+    keywords="tensorflow, deep learning, neural network",
+    license="Apache",
+
     version=__version__,   # noqa
-    description='Neural Network Toolbox on TensorFlow',
+    description='A Neural Network Training Interface on TensorFlow',
     long_description=long_description,
     long_description_content_type='text/markdown',
+
+    packages=find_packages(exclude=["examples", "tests"]),
+    zip_safe=False,  		    # dataset and __init__ use file
+
     install_requires=[
         "numpy>=1.14",
         "six",
         "termcolor>=1.1",
         "tabulate>=0.7.7",
-        "tqdm>4.11.1",
+        "tqdm>4.29.0",
         "msgpack>=0.5.2",
         "msgpack-numpy>=0.4.4.2",
         "pyzmq>=16",
-        "subprocess32; python_version < '3.0'",
-        "functools32; python_version < '3.0'",
+        "psutil>=5",
     ],
     tests_require=['flake8', 'scikit-image'],
     extras_require={
-        'all': ['pillow', 'scipy', 'h5py', 'lmdb>=0.92', 'matplotlib', 'scikit-learn'] +
-               ['python-prctl'] if platform.system() == 'Linux' else [],
-        'all: python_version < "3.0"': ['tornado'],
+        'all': ['scipy', 'h5py>=2.1', 'lmdb>=0.92', 'matplotlib', 'scikit-learn'],
+        'all: "linux" in sys_platform': ['python-prctl'],
     },
+
+    # https://packaging.python.org/guides/distributing-packages-using-setuptools/#universal-wheels
+    options={'bdist_wheel': {'universal': '1'}},
 )

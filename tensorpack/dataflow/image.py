@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: image.py
 
@@ -47,7 +45,7 @@ class ExceptionHandler:
 
 
 class ImageFromFile(RNGDataFlow):
-    """ Produce images read from a list of files. """
+    """ Produce images read from a list of files as (h, w, c) arrays. """
     def __init__(self, files, channel=3, resize=None, shuffle=False):
         """
         Args:
@@ -94,7 +92,7 @@ class AugmentImageComponent(MapDataComponent):
         Args:
             ds (DataFlow): input DataFlow.
             augmentors (AugmentorList): a list of :class:`imgaug.ImageAugmentor` to be applied in order.
-            index (int): the index of the image component to be augmented in the datapoint.
+            index (int or str): the index or key of the image component to be augmented in the datapoint.
             copy (bool): Some augmentors modify the input images. When copy is
                 True, a copy will be made before any augmentors are applied,
                 to keep the original images not modified.
@@ -136,8 +134,8 @@ class AugmentImageCoordinates(MapData):
         Args:
             ds (DataFlow): input DataFlow.
             augmentors (AugmentorList): a list of :class:`imgaug.ImageAugmentor` to be applied in order.
-            img_index (int): the index of the image component to be augmented.
-            coords_index (int): the index of the coordinate component to be augmented.
+            img_index (int or str): the index/key of the image component to be augmented.
+            coords_index (int or str): the index/key of the coordinate component to be augmented.
             copy, catch_exceptions: same as in :class:`AugmentImageComponent`
         """
         if isinstance(augmentors, AugmentorList):
@@ -163,10 +161,9 @@ class AugmentImageCoordinates(MapData):
             validate_coords(coords)
             if self._copy:
                 img, coords = copy_mod.deepcopy((img, coords))
-            img, prms = self.augs.augment_return_params(img)
-            dp[self._img_index] = img
-            coords = self.augs.augment_coords(coords, prms)
-            dp[self._coords_index] = coords
+            tfms = self.augs.get_transform(img)
+            dp[self._img_index] = tfms.apply_image(img)
+            dp[self._coords_index] = tfms.apply_coords(coords)
             return dp
 
 
@@ -199,32 +196,34 @@ class AugmentImageComponents(MapData):
         else:
             self.augs = AugmentorList(augmentors)
         self.ds = ds
+        self._exception_handler = ExceptionHandler(catch_exceptions)
+        self._copy = copy
+        self._index = index
+        self._coords_index = coords_index
 
-        exception_handler = ExceptionHandler(catch_exceptions)
-
-        def func(dp):
-            dp = copy_mod.copy(dp)  # always do a shallow copy, make sure the list is intact
-            copy_func = copy_mod.deepcopy if copy else lambda x: x  # noqa
-            with exception_handler.catch():
-                major_image = index[0]  # image to be used to get params. TODO better design?
-                im = copy_func(dp[major_image])
-                check_dtype(im)
-                im, prms = self.augs.augment_return_params(im)
-                dp[major_image] = im
-                for idx in index[1:]:
-                    check_dtype(dp[idx])
-                    dp[idx] = self.augs.augment_with_params(copy_func(dp[idx]), prms)
-                for idx in coords_index:
-                    coords = copy_func(dp[idx])
-                    validate_coords(coords)
-                    dp[idx] = self.augs.augment_coords(coords, prms)
-                return dp
-
-        super(AugmentImageComponents, self).__init__(ds, func)
+        super(AugmentImageComponents, self).__init__(ds, self._aug_mapper)
 
     def reset_state(self):
         self.ds.reset_state()
         self.augs.reset_state()
+
+    def _aug_mapper(self, dp):
+        dp = copy_mod.copy(dp)  # always do a shallow copy, make sure the list is intact
+        copy_func = copy_mod.deepcopy if self._copy else lambda x: x  # noqa
+        with self._exception_handler.catch():
+            major_image = self._index[0]  # image to be used to get params. TODO better design?
+            im = copy_func(dp[major_image])
+            check_dtype(im)
+            tfms = self.augs.get_transform(im)
+            dp[major_image] = tfms.apply_image(im)
+            for idx in self._index[1:]:
+                check_dtype(dp[idx])
+                dp[idx] = tfms.apply_image(copy_func(dp[idx]))
+            for idx in self._coords_index:
+                coords = copy_func(dp[idx])
+                validate_coords(coords)
+                dp[idx] = tfms.apply_coords(coords)
+            return dp
 
 
 try:

@@ -1,12 +1,10 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: interface.py
 
-import tensorflow as tf
-
-from ..input_source import DummyConstantInput, FeedfreeInput, FeedInput, InputSource, QueueInput, StagingInput
+from ..compat import tfv1
+from ..input_source import FeedInput, InputSource, QueueInput, StagingInput
 from ..utils import logger
+from ..compat import is_tfv2
 from .config import TrainConfig
 from .tower import SingleCostTrainer
 from .trainers import SimpleTrainer
@@ -36,12 +34,10 @@ def apply_default_prefetch(input_source_or_dataflow, trainer):
         input = input_source_or_dataflow
     if hasattr(trainer, 'devices'):
         towers = trainer.devices
-        if len(towers) > 1:
-            # seem to only improve on >1 GPUs
+        if len(towers) > 1:  # seem to only help on >1 GPUs
             assert not isinstance(trainer, SimpleTrainer)
 
-            if isinstance(input, FeedfreeInput) and \
-               not isinstance(input, (StagingInput, DummyConstantInput)):
+            if isinstance(input, QueueInput):
                 logger.info("Automatically applying StagingInput on the DataFlow.")
                 input = StagingInput(input)
     return input
@@ -58,6 +54,10 @@ def launch_train_with_config(config, trainer):
     2. Call `trainer.setup_graph` with the input as well as `config.model`.
     3. Call `trainer.train` with rest of the attributes of config.
 
+    See the `related tutorial
+    <https://tensorpack.readthedocs.io/tutorial/training-interface.html#with-modeldesc-and-trainconfig>`_
+    to learn more.
+
     Args:
         config (TrainConfig):
         trainer (Trainer): an instance of :class:`SingleCostTrainer`.
@@ -69,6 +69,9 @@ def launch_train_with_config(config, trainer):
         launch_train_with_config(
             config, SyncMultiGPUTrainerParameterServer(8, ps_device='gpu'))
     """
+    if is_tfv2():
+        tfv1.disable_eager_execution()
+
     assert isinstance(trainer, SingleCostTrainer), trainer
     assert isinstance(config, TrainConfig), config
     assert config.model is not None
@@ -80,10 +83,10 @@ def launch_train_with_config(config, trainer):
 
     # This is the only place where the `ModelDesc` abstraction is useful.
     # We should gradually stay away from this unuseful abstraction.
-    # TowerFuncWrapper is a better abstraction (similar to tf.defun in the future)
+    # TowerFunc is a better abstraction (similar to tf.function in the future)
     trainer.setup_graph(
-        model.get_inputs_desc(), input,
-        model._build_graph_get_cost, model.get_optimizer)
+        model.get_input_signature(), input,
+        model.build_graph, model.get_optimizer)
     _check_unused_regularization()
     trainer.train_with_defaults(
         callbacks=config.callbacks,
@@ -97,7 +100,7 @@ def launch_train_with_config(config, trainer):
 
 
 def _check_unused_regularization():
-    coll = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+    coll = tfv1.get_collection(tfv1.GraphKeys.REGULARIZATION_LOSSES)
     unconsumed_reg = []
     for c in coll:
         if len(c.consumers()) == 0:

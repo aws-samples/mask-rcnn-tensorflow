@@ -1,15 +1,3 @@
-# specific stuff
-venv/
-test.py
-tensorflow-1.13.0-cp36-cp36m-linux_x86_64.whl
-.ignored/
-
-
-# EKS configs
-infra/eks/maskrcnn/values/
-
-
-# tensorpack-specific stuff
 train_log
 train_log_*
 logs
@@ -32,9 +20,8 @@ checkpoint
 
 
 
-
 # Byte-compiled / optimized / DLL files
-__pycache__/
+**/__pycache__/
 *.py[cod]
 
 # C extensions

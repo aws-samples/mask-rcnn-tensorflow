@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: format.py
 
@@ -7,21 +5,19 @@
 import numpy as np
 import os
 import six
-from six.moves import range
 
 from ..utils import logger
 from ..utils.argtools import log_once
-from ..utils.compatible_serialize import loads
+from ..utils.serialize import loads
 from ..utils.develop import create_dummy_class  # noqa
-from ..utils.develop import log_deprecated
 from ..utils.loadcaffe import get_caffe_pb
 from ..utils.timer import timed_operation
 from ..utils.utils import get_tqdm
-from .base import DataFlow, DataFlowReentrantGuard, RNGDataFlow
+from .base import DataFlowReentrantGuard, RNGDataFlow
 from .common import MapData
 
-__all__ = ['HDF5Data', 'LMDBData', 'LMDBDataDecoder', 'LMDBDataPoint',
-           'CaffeLMDB', 'SVMLightData', 'TFRecordData']
+__all__ = ['HDF5Data', 'LMDBData', 'LMDBDataDecoder',
+           'CaffeLMDB', 'SVMLightData']
 
 """
 Adapters for different data format.
@@ -47,9 +43,9 @@ class HDF5Data(RNGDataFlow):
         """
         self.f = h5py.File(filename, 'r')
         logger.info("Loading {} to memory...".format(filename))
-        self.dps = [self.f[k].value for k in data_paths]
+        self.dps = [self.f[k][...] for k in data_paths]
         lens = [len(k) for k in self.dps]
-        assert all([k == lens[0] for k in lens])
+        assert all(k == lens[0] for k in lens)
         self._size = lens[0]
         self.shuffle = shuffle
 
@@ -93,7 +89,9 @@ class LMDBData(RNGDataFlow):
         self._size = self._txn.stat()['entries']
         self._set_keys(keys)
         logger.info("Found {} entries in {}".format(self._size, self._lmdb_path))
-        self._guard = DataFlowReentrantGuard()
+
+        # Clean them up after finding the list of keys, since we don't want to fork them
+        self._close_lmdb()
 
     def _set_keys(self, keys=None):
         def find_keys(txn, size):
@@ -130,10 +128,15 @@ class LMDBData(RNGDataFlow):
                                map_size=1099511627776 * 2, max_readers=100)
         self._txn = self._lmdb.begin()
 
-    def reset_state(self):
+    def _close_lmdb(self):
         self._lmdb.close()
+        del self._lmdb
+        del self._txn
+
+    def reset_state(self):
+        self._guard = DataFlowReentrantGuard()
         super(LMDBData, self).reset_state()
-        self._open_lmdb()
+        self._open_lmdb()  # open the LMDB in the worker process
 
     def __len__(self):
         return self._size
@@ -142,8 +145,7 @@ class LMDBData(RNGDataFlow):
         with self._guard:
             if not self._shuffle:
                 c = self._txn.cursor()
-                while c.next():
-                    k, v = c.item()
+                for k, v in c:
                     if k != b'__keys__':
                         yield [k, v]
             else:
@@ -167,24 +169,9 @@ class LMDBDataDecoder(MapData):
         super(LMDBDataDecoder, self).__init__(lmdb_data, f)
 
 
-class LMDBDataPoint(MapData):
-    def __init__(self, *args, **kwargs):
-        log_deprecated("LMDBDataPoint", "Use LMDBSerializer.load() instead!", "2019-01-31")
-        if isinstance(args[0], DataFlow):
-            ds = args[0]
-            assert len(args) == 1 and len(kwargs) == 0, \
-                "No more arguments are allowed if LMDBDataPoint is called with a LMDBData instance!"
-        else:
-            ds = LMDBData(*args, **kwargs)
-
-        def f(dp):
-            return loads(dp[1])
-        super(LMDBDataPoint, self).__init__(ds, f)
-
-
 def CaffeLMDB(lmdb_path, shuffle=True, keys=None):
     """
-    Read a Caffe LMDB file where each value contains a ``caffe.Datum`` protobuf.
+    Read a Caffe-format LMDB file where each value contains a ``caffe.Datum`` protobuf.
     Produces datapoints of the format: [HWC image, label].
 
     Note that Caffe LMDB format is not efficient: it stores serialized raw
@@ -192,9 +179,6 @@ def CaffeLMDB(lmdb_path, shuffle=True, keys=None):
 
     Args:
         lmdb_path, shuffle, keys: same as :class:`LMDBData`.
-
-    Returns:
-        a :class:`LMDBDataDecoder` instance.
 
     Example:
         .. code-block:: python
@@ -245,23 +229,6 @@ class SVMLightData(RNGDataFlow):
             yield [self.X[id, :], self.y[id]]
 
 
-class TFRecordData(DataFlow):
-    def __init__(self, path, size=None):
-        log_deprecated("TFRecordData", "Use TFRecordSerializer.load instead!", "2019-01-31")
-        self._path = path
-        self._size = int(size)
-
-    def __len__(self):
-        if self._size:
-            return self._size
-        return len(super(TFRecordData, self))
-
-    def __iter__(self):
-        gen = tf.python_io.tf_record_iterator(self._path)
-        for dp in gen:
-            yield loads(dp)
-
-
 try:
     import h5py
 except ImportError:
@@ -270,10 +237,5 @@ except ImportError:
 try:
     import lmdb
 except ImportError:
-    for klass in ['LMDBData', 'LMDBDataDecoder', 'LMDBDataPoint', 'CaffeLMDB']:
+    for klass in ['LMDBData', 'LMDBDataDecoder', 'CaffeLMDB']:
         globals()[klass] = create_dummy_class(klass, 'lmdb')
-
-try:
-    import tensorflow as tf
-except ImportError:
-    TFRecordData = create_dummy_class('TFRecordData', 'tensorflow')   # noqa

@@ -1,10 +1,10 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: parallel.py
 
 import atexit
+import pickle
 import errno
+import traceback
 import itertools
 import multiprocessing as mp
 import os
@@ -13,24 +13,41 @@ import uuid
 import weakref
 from contextlib import contextmanager
 import zmq
-from six.moves import queue, range, zip
+from six.moves import queue, range
 
 from ..utils import logger
 from ..utils.concurrency import (
-    StoppableThread, enable_death_signal, ensure_proc_terminate, mask_sigint, start_proc_mask_signal)
-from ..utils.develop import log_deprecated
-from ..utils.gpu import change_gpu
-from ..utils.serialize import dumps, loads
+    StoppableThread, enable_death_signal, ensure_proc_terminate, start_proc_mask_signal)
+from ..utils.serialize import dumps_once as dumps, loads_once as loads
 from .base import DataFlow, DataFlowReentrantGuard, DataFlowTerminated, ProxyDataFlow
 
 __all__ = ['PrefetchData', 'MultiProcessPrefetchData',
-           'PrefetchDataZMQ', 'PrefetchOnGPUs', 'MultiThreadPrefetchData']
+           'MultiProcessRunner', 'MultiProcessRunnerZMQ', 'MultiThreadRunner',
+           'PrefetchDataZMQ', 'MultiThreadPrefetchData']
+
+
+# from https://github.com/pytorch/pytorch/blob/master/torch/utils/data/_utils/__init__.py
+class _ExceptionWrapper:
+    MAGIC = b"EXC_MAGIC"
+    """Wraps an exception plus traceback to communicate across threads"""
+    def __init__(self, exc_info):
+        # It is important that we don't store exc_info, see
+        # NOTE [ Python Traceback Reference Cycle Problem ]
+        self.exc_type = exc_info[0]
+        self.exc_msg = "".join(traceback.format_exception(*exc_info))
+
+    def pack(self):
+        return self.MAGIC + pickle.dumps(self)
+
+    @staticmethod
+    def unpack(dp):
+        if isinstance(dp, bytes) and dp.startswith(_ExceptionWrapper.MAGIC):
+            return pickle.loads(dp[len(_ExceptionWrapper.MAGIC):])
 
 
 def _repeat_iter(get_itr):
     while True:
-        for x in get_itr():
-            yield x
+        yield from get_itr()
 
 
 def _bind_guard(sock, name):
@@ -39,7 +56,7 @@ def _bind_guard(sock, name):
     except zmq.ZMQError:
         logger.error(
             "ZMQError in socket.bind('{}'). Perhaps you're \
-using pipes on a non-local file system. See documentation of PrefetchDataZMQ \
+using pipes on a non-local file system. See documentation of MultiProcessRunnerZMQ \
 for more information.".format(name))
         raise
 
@@ -122,37 +139,39 @@ class _MultiProcessZMQDataFlow(DataFlow):
             pass
 
 
-class MultiProcessPrefetchData(ProxyDataFlow):
+class MultiProcessRunner(ProxyDataFlow):
     """
-    Prefetch data from a DataFlow using Python multiprocessing utilities.
-    It will fork the process calling :meth:`__init__`, collect datapoints from `ds` in each
+    Running a DataFlow in >=1 processes using Python multiprocessing utilities.
+    It will fork the process that calls :meth:`__init__`, collect datapoints from `ds` in each
     process by a Python :class:`multiprocessing.Queue`.
 
     Note:
         1. (Data integrity) An iterator cannot run faster automatically -- what's happening is
-           that the process will be forked ``nr_proc`` times.
-           There will be ``nr_proc`` dataflow running in parallel and **independently**.
+           that the process will be forked ``num_proc`` times.
+           There will be ``num_proc`` dataflow running in parallel and **independently**.
            As a result, we have the following guarantee on the dataflow correctness:
 
-           a. When ``nr_proc=1``, this dataflow produces the same data as the
+           a. When ``num_proc=1``, this dataflow produces the same data as the
               given dataflow in the same order.
-           b. When ``nr_proc>1``, if each sample from the given dataflow is i.i.d.,
+           b. When ``num_proc>1``, if each sample from the given dataflow is i.i.d.,
               then this dataflow produces the **same distribution** of data as the given dataflow.
               This implies that there will be duplication, reordering, etc.
               You probably only want to use it for training.
 
               For example, if your original dataflow contains no randomness and produces the same first datapoint,
-              then after parallel prefetching, the datapoint will be produced ``nr_proc`` times
+              then after parallel prefetching, the datapoint will be produced ``num_proc`` times
               at the beginning.
               Even when your original dataflow is fully shuffled, you still need to be aware of the
               `Birthday Paradox <https://en.wikipedia.org/wiki/Birthday_problem>`_
               and know that you'll likely see duplicates.
 
-           To utilize parallelism with stricter data integrity, you can use the parallel versions of `MapData`.
-        2. This has more serialization overhead than :class:`PrefetchDataZMQ` when data is large.
-        3. You can nest like this: ``PrefetchDataZMQ(PrefetchData(df, nr_proc=a), nr_proc=b)``.
+           To utilize parallelism with more strict data integrity, you can use
+           the parallel versions of :class:`MapData`: :class:`MultiThreadMapData`, :class:`MultiProcessMapData`.
+        2. This has more serialization overhead than :class:`MultiProcessRunnerZMQ` when data is large.
+        3. You can nest like this: ``MultiProcessRunnerZMQ(MultiProcessRunner(df, num_proc=a), num_proc=b)``.
            A total of ``a`` instances of ``df`` worker processes will be created.
-        4. fork happens in `__init__`. `reset_state()` is a no-op. The worker processes won't get called.
+        4. Fork happens in `__init__`. `reset_state()` is a no-op.
+           DataFlow in the worker processes will be reset at the time of fork.
         5. This DataFlow does support windows. However, Windows requires more strict picklability on processes,
            which means that some code that's forkable on Linux may not be forkable on Windows. If that happens you'll
            need to re-organize some part of code that's not forkable.
@@ -160,7 +179,7 @@ class MultiProcessPrefetchData(ProxyDataFlow):
 
     class _Worker(mp.Process):
         def __init__(self, ds, queue, idx):
-            super(MultiProcessPrefetchData._Worker, self).__init__()
+            super(MultiProcessRunner._Worker, self).__init__()
             self.ds = ds
             self.queue = queue
             self.idx = idx
@@ -173,35 +192,38 @@ class MultiProcessPrefetchData(ProxyDataFlow):
                 for dp in self.ds:
                     self.queue.put(dp)
 
-    def __init__(self, ds, nr_prefetch, nr_proc):
+    def __init__(self, ds, num_prefetch, num_proc):
         """
         Args:
             ds (DataFlow): input DataFlow.
-            nr_prefetch (int): size of the queue to hold prefetched datapoints.
-            nr_proc (int): number of processes to use.
+            num_prefetch (int): size of the queue to hold prefetched datapoints.
+                Required.
+            num_proc (int): number of processes to use. Required.
         """
         # https://docs.python.org/3.6/library/multiprocessing.html?highlight=process#the-spawn-and-forkserver-start-methods
         if os.name == 'nt':
-            logger.warn("MultiProcessPrefetchData does support Windows. \
+            logger.warn("MultiProcessRunner does support Windows. \
 However, Windows requires more strict picklability on processes, which may \
 lead of failure on some of the code.")
-        super(MultiProcessPrefetchData, self).__init__(ds)
+        super(MultiProcessRunner, self).__init__(ds)
         try:
             self._size = len(ds)
         except NotImplementedError:
             self._size = -1
-        self.nr_proc = nr_proc
-        self.nr_prefetch = nr_prefetch
+        assert num_proc > 0, num_proc
+        assert num_prefetch > 0, num_prefetch
+        self.num_proc = num_proc
+        self.num_prefetch = num_prefetch
 
-        if nr_proc > 1:
-            logger.info("[MultiProcessPrefetchData] Will fork a dataflow more than one times. "
+        if num_proc > 1:
+            logger.info("[MultiProcessRunner] Will fork a dataflow more than one times. "
                         "This assumes the datapoints are i.i.d.")
 
-        self.queue = mp.Queue(self.nr_prefetch)
-        self.procs = [MultiProcessPrefetchData._Worker(self.ds, self.queue, idx)
-                      for idx in range(self.nr_proc)]
+        self.queue = mp.Queue(self.num_prefetch)
+        self.procs = [MultiProcessRunner._Worker(self.ds, self.queue, idx)
+                      for idx in range(self.num_proc)]
         ensure_proc_terminate(self.procs)
-        start_proc_mask_signal(self.procs)
+        self._reset_done = False
 
     def __iter__(self):
         for k in itertools.count():
@@ -211,41 +233,40 @@ lead of failure on some of the code.")
             yield dp
 
     def reset_state(self):
-        # do nothing. all ds are reset once and only once in spawned processes
-        pass
+        assert not self._reset_done, "reset_state() was called twice! This violates the API of DataFlow!"
+        self._reset_done = True
+        start_proc_mask_signal(self.procs)
 
 
-PrefetchData = MultiProcessPrefetchData
-
-
-# TODO renamed to MultiProcessDataFlow{,ZMQ} if separated to a new project
-class PrefetchDataZMQ(_MultiProcessZMQDataFlow):
+class MultiProcessRunnerZMQ(_MultiProcessZMQDataFlow):
     """
-    Prefetch data from a DataFlow using multiple processes, with ZeroMQ for communication.
+    Run a DataFlow in >=1 processes, with ZeroMQ for communication.
     It will fork the calling process of :meth:`reset_state()`,
     and collect datapoints from the given dataflow in each process by ZeroMQ IPC pipe.
+    This is typically faster than :class:`MultiProcessRunner`.
 
     Note:
         1. (Data integrity) An iterator cannot run faster automatically -- what's happening is
-           that the process will be forked ``nr_proc`` times.
-           There will be ``nr_proc`` dataflow running in parallel and **independently**.
+           that the process will be forked ``num_proc`` times.
+           There will be ``num_proc`` dataflow running in parallel and **independently**.
            As a result, we have the following guarantee on the dataflow correctness:
 
-           a. When ``nr_proc=1``, this dataflow produces the same data as the
+           a. When ``num_proc=1``, this dataflow produces the same data as the
               given dataflow in the same order.
-           b. When ``nr_proc>1``, if each sample from the given dataflow is i.i.d.,
+           b. When ``num_proc>1``, if each sample from the given dataflow is i.i.d.,
               then this dataflow produces the **same distribution** of data as the given dataflow.
               This implies that there will be duplication, reordering, etc.
               You probably only want to use it for training.
 
               For example, if your original dataflow contains no randomness and produces the same first datapoint,
-              then after parallel prefetching, the datapoint will be produced ``nr_proc`` times
+              then after parallel prefetching, the datapoint will be produced ``num_proc`` times
               at the beginning.
               Even when your original dataflow is fully shuffled, you still need to be aware of the
               `Birthday Paradox <https://en.wikipedia.org/wiki/Birthday_problem>`_
               and know that you'll likely see duplicates.
 
-           To utilize parallelism with stricter data integrity, you can use the parallel versions of `MapData`.
+           To utilize parallelism with more strict data integrity, you can use
+           the parallel versions of :class:`MapData`: :class:`MultiThreadMapData`, :class:`MultiProcessMapData`.
         2. `reset_state()` of the given dataflow will be called **once and only once** in the worker processes.
         3. The fork of processes happened in this dataflow's `reset_state()` method.
            Please note that forking a TensorFlow GPU session may be unsafe.
@@ -253,10 +274,10 @@ class PrefetchDataZMQ(_MultiProcessZMQDataFlow):
            it's better to fork before creating the session.
         4. (Fork-safety) After the fork has happened, this dataflow becomes not fork-safe.
            i.e., if you fork an already reset instance of this dataflow,
-           it won't be usable in the forked process. Therefore, do not nest two `PrefetchDataZMQ`.
+           it won't be usable in the forked process. Therefore, do not nest two `MultiProcessRunnerZMQ`.
         5. (Thread-safety) ZMQ is not thread safe. Therefore, do not call :meth:`get_data` of the same dataflow in
            more than 1 threads.
-        6. This dataflow does not support windows. Use `MultiProcessPrefetchData` which works on windows.
+        6. This dataflow does not support windows. Use `MultiProcessRunner` which works on windows.
         7. (For Mac only) A UNIX named pipe will be created in the current directory.
            However, certain non-local filesystem such as NFS/GlusterFS/AFS doesn't always support pipes.
            You can change the directory by ``export TENSORPACK_PIPEDIR=/other/dir``.
@@ -271,7 +292,7 @@ class PrefetchDataZMQ(_MultiProcessZMQDataFlow):
 
     class _Worker(mp.Process):
         def __init__(self, ds, conn_name, hwm, idx):
-            super(PrefetchDataZMQ._Worker, self).__init__()
+            super(MultiProcessRunnerZMQ._Worker, self).__init__()
             self.ds = ds
             self.conn_name = conn_name
             self.hwm = hwm
@@ -280,14 +301,21 @@ class PrefetchDataZMQ(_MultiProcessZMQDataFlow):
         def run(self):
             enable_death_signal(_warn=self.idx == 0)
             self.ds.reset_state()
+            itr = _repeat_iter(lambda: self.ds)
+
             context = zmq.Context()
             socket = context.socket(zmq.PUSH)
             socket.set_hwm(self.hwm)
             socket.connect(self.conn_name)
             try:
                 while True:
-                    for dp in self.ds:
+                    try:
+                        dp = next(itr)
                         socket.send(dumps(dp), copy=False)
+                    except Exception:
+                        dp = _ExceptionWrapper(sys.exc_info()).pack()
+                        socket.send(dumps(dp), copy=False)
+                        raise
             # sigint could still propagate here, e.g. when nested
             except KeyboardInterrupt:
                 pass
@@ -295,22 +323,21 @@ class PrefetchDataZMQ(_MultiProcessZMQDataFlow):
                 socket.close(0)
                 context.destroy(0)
 
-    def __init__(self, ds, nr_proc=1, hwm=50):
+    def __init__(self, ds, num_proc=1, hwm=50):
         """
         Args:
             ds (DataFlow): input DataFlow.
-            nr_proc (int): number of processes to use.
+            num_proc (int): number of processes to use.
             hwm (int): the zmq "high-water mark" (queue size) for both sender and receiver.
         """
-        super(PrefetchDataZMQ, self).__init__()
+        super(MultiProcessRunnerZMQ, self).__init__()
 
         self.ds = ds
-        self.nr_proc = nr_proc
+        self.num_proc = num_proc
         self._hwm = hwm
 
-        self._guard = DataFlowReentrantGuard()
-        if nr_proc > 1:
-            logger.info("[PrefetchDataZMQ] Will fork a dataflow more than one times. "
+        if num_proc > 1:
+            logger.info("[MultiProcessRunnerZMQ] Will fork a dataflow more than one times. "
                         "This assumes the datapoints are i.i.d.")
         try:
             self._size = ds.__len__()
@@ -318,87 +345,69 @@ class PrefetchDataZMQ(_MultiProcessZMQDataFlow):
             self._size = -1
 
     def _recv(self):
-        return loads(self.socket.recv(copy=False))
+        ret = loads(self.socket.recv(copy=False))
+        exc = _ExceptionWrapper.unpack(ret)
+        if exc is not None:
+            logger.error("Exception '{}' in worker:".format(str(exc.exc_type)))
+            raise exc.exc_type(exc.exc_msg)
+        return ret
 
     def __len__(self):
         return self.ds.__len__()
 
     def __iter__(self):
-        with self._guard, _zmq_catch_error('PrefetchDataZMQ'):
+        with self._guard, _zmq_catch_error('MultiProcessRunnerZMQ'):
             for k in itertools.count():
                 if self._size > 0 and k >= self._size:
                     break
                 yield self._recv()
 
     def reset_state(self):
-        super(PrefetchDataZMQ, self).reset_state()
+        super(MultiProcessRunnerZMQ, self).reset_state()
+        self._guard = DataFlowReentrantGuard()
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PULL)
         self.socket.set_hwm(self._hwm)
         pipename = _get_pipe_name('dataflow')
         _bind_guard(self.socket, pipename)
 
-        self._procs = [PrefetchDataZMQ._Worker(self.ds, pipename, self._hwm, idx)
-                       for idx in range(self.nr_proc)]
+        self._procs = [MultiProcessRunnerZMQ._Worker(self.ds, pipename, self._hwm, idx)
+                       for idx in range(self.num_proc)]
         self._start_processes()
 
 
-class PrefetchOnGPUs(PrefetchDataZMQ):
-    """
-    Similar to :class:`PrefetchDataZMQ`,
-    but prefetch with each process having its own ``CUDA_VISIBLE_DEVICES`` variable
-    mapped to one GPU.
-    """
-
-    def __init__(self, ds, gpus):
-        """
-        Args:
-            ds (DataFlow): input DataFlow.
-            gpus (list[int]): list of GPUs to use. Will also start this number of processes.
-        """
-        log_deprecated("PrefetchOnGPUs", "It does not seem useful, and please implement it yourself.", "2019-02-28")
-        self.gpus = gpus
-        super(PrefetchOnGPUs, self).__init__(ds, len(gpus))
-
-    def _start_processes(self):
-        with mask_sigint():
-            for gpu, proc in zip(self.gpus, self._procs):
-                with change_gpu(gpu):
-                    proc.start()
-
-
-# TODO renamed to MultiThreadDataFlow if separated to a new project
-class MultiThreadPrefetchData(DataFlow):
+class MultiThreadRunner(DataFlow):
     """
     Create multiple dataflow instances and run them each in one thread.
-    Collect outputs with a queue.
+    Collect outputs from them with a queue.
 
     Note:
         1. (Data integrity) An iterator cannot run faster automatically -- what's happening is
            that each thread will create a dataflow iterator.
-           There will be ``nr_thread`` dataflow running in parallel and **independently**.
+           There will be ``num_thread`` dataflow running in parallel and **independently**.
            As a result, we have the following guarantee on the dataflow correctness:
 
-           a. When ``nr_thread=1``, this dataflow produces the same data as the
+           a. When ``num_thread=1``, this dataflow produces the same data as the
               given dataflow in the same order.
-           b. When ``nr_thread>1``, if each sample from the given dataflow is i.i.d.,
+           b. When ``num_thread>1``, if each sample from the given dataflow is i.i.d.,
               then this dataflow produces the **same distribution** of data as the given dataflow.
               This implies that there will be duplication, reordering, etc.
               You probably only want to use it for training.
 
               For example, if your original dataflow contains no randomness and produces the same first datapoint,
-              then after parallel prefetching, the datapoint will be produced ``nr_thread`` times
+              then after parallel prefetching, the datapoint will be produced ``num_thread`` times
               at the beginning.
               Even when your original dataflow is fully shuffled, you still need to be aware of the
               `Birthday Paradox <https://en.wikipedia.org/wiki/Birthday_problem>`_
               and know that you'll likely see duplicates.
 
-           To utilize parallelism with stricter data integrity, you can use the parallel versions of `MapData`.
+           To utilize parallelism with more strict data integrity, you can use
+           the parallel versions of :class:`MapData`: :class:`MultiThreadMapData`, :class:`MultiProcessMapData`.
     """
 
     class _Worker(StoppableThread):
         def __init__(self, get_df, queue):
-            super(MultiThreadPrefetchData._Worker, self).__init__()
+            super(MultiThreadRunner._Worker, self).__init__()
             self.df = get_df()
             assert isinstance(self.df, DataFlow), self.df
             self.queue = queue
@@ -420,21 +429,28 @@ class MultiThreadPrefetchData(DataFlow):
             finally:
                 self.stop()
 
-    def __init__(self, get_df, nr_prefetch, nr_thread):
+    def __init__(self, get_df, num_prefetch, num_thread):
         """
         Args:
             get_df ( -> DataFlow): a callable which returns a DataFlow.
                 Each thread will call this function to get the DataFlow to use.
-                Therefore do not return the same DataFlow for each call.
-            nr_prefetch (int): size of the queue
-            nr_thread (int): number of threads
+                Therefore do not return the same DataFlow object for each call,
+                unless your dataflow is stateless.
+            num_prefetch (int): size of the queue
+            num_thread (int): number of threads
         """
-        assert nr_thread > 0 and nr_prefetch > 0
-        self.nr_thread = nr_thread
-        self.queue = queue.Queue(maxsize=nr_prefetch)
+        assert num_thread > 0, num_thread
+        assert num_prefetch > 0, num_prefetch
+        self.num_thread = num_thread
+        self.queue = queue.Queue(maxsize=num_prefetch)
         self.threads = [
-            MultiThreadPrefetchData._Worker(get_df, self.queue)
-            for _ in range(nr_thread)]
+            MultiThreadRunner._Worker(get_df, self.queue)
+            for _ in range(num_thread)]
+
+        try:
+            self._size = self.__len__()
+        except NotImplementedError:
+            self._size = -1
 
     def reset_state(self):
         for th in self.threads:
@@ -445,7 +461,9 @@ class MultiThreadPrefetchData(DataFlow):
         return self.threads[0].df.__len__()
 
     def __iter__(self):
-        while True:
+        for k in itertools.count():
+            if self._size > 0 and k >= self._size:
+                break
             yield self.queue.get()
 
     def __del__(self):
@@ -507,13 +525,19 @@ plasma = None
 #     PlasmaGetData = create_dummy_class('PlasmaGetData', 'pyarrow')   # noqa
 
 
+# The old inappropriate names:
+PrefetchData = MultiProcessRunner
+MultiProcessPrefetchData = MultiProcessRunner
+PrefetchDataZMQ = MultiProcessRunnerZMQ
+MultiThreadPrefetchData = MultiThreadRunner
+
 if __name__ == '__main__':
     import time
     from .raw import DataFromGenerator
     from .common import FixedSizeData
     x = DataFromGenerator(itertools.count())
     x = FixedSizeData(x, 100)
-    x = PrefetchDataZMQ(x, 2)
+    x = MultiProcessRunnerZMQ(x, 2)
     x.reset_state()
     for idx, dp in enumerate(x):
         print(dp)

@@ -1,8 +1,0 @@
-set:
-  maskrcnn:
-    lr_epoch_schedule: "[(16, 0.1), (20, 0.01), (24, None)]"
-
-append:
-  global:
-    name: -24e
-

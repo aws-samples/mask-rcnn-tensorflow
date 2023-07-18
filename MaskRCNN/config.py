@@ -1,8 +1,7 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-# -*- coding: utf-8 -*-
-# File: config.py
 
+import tensorflow as tf
 import numpy as np
 import os
 import six
@@ -112,31 +111,20 @@ _C.BACKBONE.STRIDE_1X1 = False  # True for MSRA models
 # schedule -----------------------
 _C.TRAIN.NUM_GPUS = None         # by default, will be set from code
 _C.TRAIN.WEIGHT_DECAY = 1e-4
-_C.TRAIN.BASE_LR = 1e-2  / 8. # defined for total batch size=1. It will be adjusted automatically using linear scaling.
+_C.TRAIN.BASE_LR = 1.25e-2  / 8.0 # defined for total batch size=1. It will be adjusted automatically using linear scaling.
 _C.TRAIN.WARMUP_STEPS = 1000   # in terms of iterations. This is not affected by #GPUs
-_C.TRAIN.WARMUP_INIT_LR = 1e-2 * 0.33 / 8. # defined for total batch size=1. It will be adjusted automatically
+_C.TRAIN.WARMUP_INIT_LR = 1e-2 * 0.33 / 8.0 # defined for total batch size=1. It will be adjusted automatically
 _C.TRAIN.STARTING_EPOCH = 1  # the first epoch to start with, useful to continue a training
 
-# LR_SCHEDULE means equivalent steps when the total batch size is 8.
-# When the total bs!=8, the actual iterations to decrease learning rate, and
-# the base learning rate are computed from BASE_LR and LR_SCHEDULE.
-# Therefore, there is *no need* to modify the config if you only change the number of GPUs.
-
-# _C.TRAIN.LR_SCHEDULE = [120000, 160000, 180000]      # "1x" schedule in detectron
-# _C.TRAIN.LR_SCHEDULE = [240000, 320000, 360000]      # "2x" schedule in detectron
-# Longer schedules for from-scratch training (https://arxiv.org/abs/1811.08883):
-# _C.TRAIN.LR_SCHEDULE = [960000, 1040000, 1080000]    # "6x" schedule in detectron
-# _C.TRAIN.LR_SCHEDULE = [1500000, 1580000, 1620000]   # "9x" schedule in detectron
-
 _C.TRAIN.LR_EPOCH_SCHEDULE = [(8, 0.1), (10, 0.01), (12, None)] # "1x" schedule in detectron
-_C.TRAIN.EVAL_PERIOD = 25  # period (epochs) to run evaluation
+_C.TRAIN.EVAL_PERIOD = 1 # period (epochs) to run evaluation
 _C.TRAIN.BATCH_SIZE_PER_GPU = 1
 _C.TRAIN.SEED = 1234
 _C.TRAIN.GRADIENT_CLIP = 0 # set non-zero value to enable gradient clip, 0.36 is recommended for 32x4
-_C.TRAIN.BACKBONE_NCHW = True # use nchw for backbone
-_C.TRAIN.FPN_NCHW = True # use nchw for fpn
-_C.TRAIN.RPN_NCHW = True # use nchw for rpn head
-_C.TRAIN.MASK_NCHW = True # use nchw for maskhead
+_C.TRAIN.BACKBONE_NCHW = False
+_C.TRAIN.FPN_NCHW = False
+_C.TRAIN.RPN_NCHW = False
+_C.TRAIN.MASK_NCHW = False
 _C.TRAIN.SHOULD_STOP = False # use stop the training early (for async eval)
 
 # preprocessing --------------------
@@ -161,28 +149,21 @@ _C.RPN.NEGATIVE_ANCHOR_THRESH = 0.3
 # rpn training -------------------------
 _C.RPN.FG_RATIO = 0.5  # fg ratio among selected RPN anchors
 _C.RPN.BATCH_PER_IM = 256  # total (across FPN levels) number of anchors that are marked valid
-#_C.RPN.MIN_SIZE = 0
 _C.RPN.MIN_SIZE = 0.1
 _C.RPN.PROPOSAL_NMS_THRESH = 0.7
 # Anchors which overlap with a crowd box (IOA larger than threshold) will be ignored.
 # Setting this to a value larger than 1.0 will disable the feature.
 # It is disabled by default because Detectron does not do this.
 _C.RPN.CROWD_OVERLAP_THRESH = 9.99
-_C.RPN.HEAD_DIM = 1024      # used in C4 only
 
 # RPN proposal selection -------------------------------
-# for C4
-_C.RPN.TRAIN_PRE_NMS_TOPK = 12000
-_C.RPN.TRAIN_POST_NMS_TOPK = 2000
-_C.RPN.TEST_PRE_NMS_TOPK = 6000
-_C.RPN.TEST_POST_NMS_TOPK = 1000   # if you encounter OOM in inference, set this to a smaller number
-# for FPN, #proposals per-level and #proposals after merging are (for now) the same
-# if FPN.PROPOSAL_MODE = 'Joint', these options have no effect
-_C.RPN.TRAIN_PER_LEVEL_NMS_TOPK = 2000
-_C.RPN.TEST_PER_LEVEL_NMS_TOPK = 1000
-_C.RPN.TOPK_PER_IMAGE = True
+_C.RPN.TRAIN_PER_LEVEL_PRE_NMS_TOPK = 4000
+_C.RPN.TRAIN_PER_LEVEL_POST_NMS_TOPK = 2000
+_C.RPN.TRAIN_IMAGE_POST_NMS_TOPK = 2000
+_C.RPN.TEST_PER_LEVEL_PRE_NMS_TOPK = 2000
+_C.RPN.TEST_PER_LEVEL_POST_NMS_TOPK = 1000
+_C.RPN.TEST_IMAGE_POST_NMS_TOPK = 1000
 _C.RPN.UNQUANTIZED_ANCHOR = True # From tensorpack https://github.com/tensorpack/tensorpack/commit/141ab53cc37dce728802803747584fc0fb82863b
-_C.RPN.SLOW_ACCURATE_MASK = True # If on, mask calculation will be slower but more accurate. From tensorpack https://github.com/tensorpack/tensorpack/commit/141ab53cc37dce728802803747584fc0fb82863b
 
 # fastrcnn training ---------------------
 _C.FRCNN.BATCH_PER_IM = 512
@@ -192,7 +173,7 @@ _C.FRCNN.FG_RATIO = 0.25  # fg ratio in a ROI batch
 
 # FPN -------------------------
 _C.FPN.ANCHOR_STRIDES = (4, 8, 16, 32, 64)  # strides for each FPN level. Must be the same length as ANCHOR_SIZES
-_C.FPN.PROPOSAL_MODE = 'Level'  # 'Level', 'Joint'
+_C.FPN.PROPOSAL_MODE = 'Level'  # Must be set to 'Level'
 _C.FPN.NUM_CHANNEL = 256
 _C.FPN.NORM = 'None'  # 'None', 'GN'
 # The head option is only used in FPN. For C4 models, the head is C5
@@ -215,6 +196,7 @@ _C.TEST.RESULT_SCORE_THRESH_VIS = 0.3   # only visualize confident results
 _C.TEST.RESULTS_PER_IM = 100
 _C.TEST.BOX_TARGET = 0.377
 _C.TEST.MASK_TARGET = 0.339
+_C.TEST.BATCH_SIZE_PER_GPU = 1
 
 _C.freeze()  # avoid typo / wrong config keys
 
@@ -236,16 +218,19 @@ def finalize_configs(is_training):
 
     _C.RPN.NUM_ANCHOR = len(_C.RPN.ANCHOR_SIZES) * len(_C.RPN.ANCHOR_RATIOS)
     assert len(_C.FPN.ANCHOR_STRIDES) == len(_C.RPN.ANCHOR_SIZES)
+
     # image size into the backbone has to be multiple of this number
     _C.FPN.RESOLUTION_REQUIREMENT = _C.FPN.ANCHOR_STRIDES[3]  # [3] because we build FPN with features r2,r3,r4,r5
 
     if _C.MODE_FPN:
         size_mult = _C.FPN.RESOLUTION_REQUIREMENT * 1.
         _C.PREPROC.MAX_SIZE = np.ceil(_C.PREPROC.MAX_SIZE / size_mult) * size_mult
-        assert _C.FPN.PROPOSAL_MODE in ['Level', 'Joint']
+        assert _C.FPN.PROPOSAL_MODE in ['Level']
         assert _C.FPN.BOXCLASS_HEAD_FUNC.endswith('_head')
         assert _C.FPN.MRCNN_HEAD_FUNC.endswith('_head')
         assert _C.FPN.NORM in ['None', 'GN']
+    else:
+        raise NotImplementedError("MODE_FPN=False is not implemented")
 
     if is_training:
         train_scales = _C.PREPROC.TRAIN_SHORT_EDGE_SIZE

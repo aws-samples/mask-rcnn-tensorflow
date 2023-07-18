@@ -1,36 +1,34 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-# -*- coding: utf-8 -*-
-# File: model_box.py
 
-import numpy as np
 from collections import namedtuple
 import tensorflow as tf
+from MaskRCNN.performance import print_runtime_shape, print_runtime_tensor
 
 from tensorpack.tfutils.scope_utils import under_name_scope
 
 from config import config
 
 @under_name_scope()
-def clip_boxes_batch(boxes, window, batch_ids, name=None):
+def clip_boxes_batch(boxes, image_hw, name=None):
     """
     Args:
-        boxes: nx(#class)x4, xyxy
-        window: BSx2 
-        batch_ids: 1-D Tensor of size n
+        boxes: BS X N X (#class) X 4 (x1y1x2y2)
+        image_hw: BSx2 
+    Returns:
+        BS X N X (#class) X 4 (x1y1x2y2)
     """
+    boxes_shape = tf.shape(boxes)
     boxes = tf.maximum(boxes, 0.0)
 
-    wh = tf.reverse(tf.gather(window, batch_ids), axis=[1]) 
-    whwh = tf.concat((wh, wh), axis=1)
+    image_wh = tf.reverse(image_hw, axis=[-1])
+    whwh = tf.concat((image_wh, image_wh), axis=1)
+    whwh = tf.expand_dims(whwh, 1)
+    whwh = tf.expand_dims(whwh, 1)
 
-    multiples = tf.stack([tf.constant(1), tf.shape(boxes)[1], tf.constant(1)])
-    whwh_tiled = tf.tile(tf.expand_dims(whwh, 1), multiples)    # asd = [1, #class, 1]
-
+    whwh_tiled = tf.tile(whwh, [1, boxes_shape[1], boxes_shape[2], 1])    # BS X N X (#class) X 4
     boxes = tf.minimum(boxes, tf.cast(whwh_tiled, tf.float32), name=name)
     return boxes
-
-
 
 @under_name_scope()
 def clip_boxes(boxes, window, name=None):
@@ -51,11 +49,11 @@ def clip_boxes(boxes, window, name=None):
 def decode_bbox_target(box_predictions, anchors):
     """
     Args:
-        box_predictions: (..., 4), logits
-        anchors: (..., 4), floatbox. Must have the same shape
+        box_predictions: BS X N X 4(tx, ty, tw, th)
+        anchors: BS X N X 4 floatbox. Must have the same shape (x1, y1, x2, y2)
 
     Returns:
-        box_decoded: (..., 4), float32. With the same shape.
+        box_decoded: BS X N X 4 (x1, y1, x2, y2)
     """
     orig_shape = tf.shape(anchors)
     box_pred_txtytwth = tf.reshape(box_predictions, (-1, 2, 2))
@@ -67,11 +65,11 @@ def decode_bbox_target(box_predictions, anchors):
     waha = anchors_x2y2 - anchors_x1y1
     xaya = (anchors_x2y2 + anchors_x1y1) * 0.5
 
-    clip = np.log(config.PREPROC.MAX_SIZE / 16.)
-    wbhb = tf.exp(tf.minimum(box_pred_twth, clip)) * waha
+    clip = tf.cast(tf.math.log(config.PREPROC.MAX_SIZE / 16.), dtype=tf.float32)
+    wbhb = tf.math.exp(tf.minimum(box_pred_twth, clip)) * waha
     xbyb = box_pred_txty * waha + xaya
     x1y1 = xbyb - wbhb * 0.5
-    x2y2 = xbyb + wbhb * 0.5    # (...)x1x2
+    x2y2 = xbyb + wbhb * 0.5    
     out = tf.concat([x1y1, x2y2], axis=-2)
     return tf.reshape(out, orig_shape)
 
@@ -80,65 +78,54 @@ def decode_bbox_target(box_predictions, anchors):
 def encode_bbox_target(boxes, anchors):
     """
     Args:
-        boxes: (..., 4), float32
-        anchors: (..., 4), float32
+        boxes: (..., 4), float32 (x1, y1, x2, y2)
+        anchors: (..., 4), float32 (x1, y1, x2, y2)
 
     Returns:
-        box_encoded: (..., 4), float32 with the same shape.
+        box_encoded: (..., 4), (tx, ty, tw, th)
     """
     anchors_x1y1x2y2 = tf.reshape(anchors, (-1, 2, 2))
     anchors_x1y1, anchors_x2y2 = tf.split(anchors_x1y1x2y2, 2, axis=1)
-    waha = anchors_x2y2 - anchors_x1y1
-    xaya = (anchors_x2y2 + anchors_x1y1) * 0.5
+    anchors_wh = anchors_x2y2 - anchors_x1y1
+    anchors_xy = (anchors_x2y2 + anchors_x1y1) * 0.5
 
     boxes_x1y1x2y2 = tf.reshape(boxes, (-1, 2, 2))
     boxes_x1y1, boxes_x2y2 = tf.split(boxes_x1y1x2y2, 2, axis=1)
-    wbhb = boxes_x2y2 - boxes_x1y1
-    xbyb = (boxes_x2y2 + boxes_x1y1) * 0.5
+    boxes_wh = boxes_x2y2 - boxes_x1y1
+    boxes_xy = (boxes_x2y2 + boxes_x1y1) * 0.5
 
     # Note that here not all boxes are valid. Some may be zero
-    txty = (xbyb - xaya) / waha
-    twth = tf.log(wbhb / waha)  # may contain -inf for invalid boxes
-    encoded = tf.concat([txty, twth], axis=1)  # (-1x2x2)
-    return tf.reshape(encoded, tf.shape(boxes))
-
-
-
-
+    txty = (boxes_xy - anchors_xy) / anchors_wh
+    twth = tf.math.log(boxes_wh / anchors_wh)  # may contain -inf for invalid boxes
+    encoded = tf.concat([txty, twth], axis=1)  
+    encoded = tf.reshape(encoded, tf.shape(boxes))
+    return encoded
 
 
 @under_name_scope()
-def crop_and_resize(image, boxes, box_ind, crop_size, orig_image_dims, pad_border=True, verbose_batch_index=None):
+def crop_and_resize(image, boxes, box_ind, crop_size, orig_image_dims, pad_border=True):
     """
     Aligned version of tf.image.crop_and_resize, following our definition of floating point boxes.
 
     Args:
-        image: NCHW
-        boxes: nx4, x1y1x2y2
+        image: N x H x W x C
+        boxes: nx4, y1x1y2x2
         box_ind: (n,)
         crop_size (int):
     Returns:
         n,C,size,size
     """
-    prefix = "custom crop_and_resize"
-    if verbose_batch_index is not None:
-        prefix += f' B_IDX {verbose_batch_index}'
-
     assert isinstance(crop_size, int), crop_size
-
-
-    # boxes = print_runtime_shape("boxes (early)", boxes, prefix=prefix)
-
+    
+    #image = print_runtime_shape("image", image)
+    #boxes = print_runtime_shape("boxes", boxes)
+    #box_ind = print_runtime_shape("box_ind", box_ind)
+    
     boxes = tf.stop_gradient(boxes)
+    image = image[:, :orig_image_dims[0], :orig_image_dims[1], :]
 
-#    org_img_size = tf.concat((tf.constant([-1, -1], dtype=tf.int32), orig_image_dims), axis=0)
-#    image = tf.slice(image, begin=tf.zeros(4, dtype=tf.int32), size=org_img_size)
-    image = image[:, :, :orig_image_dims[0], :orig_image_dims[1]]
-
-    # TF's crop_and_resize produces zeros on border
     if pad_border:
-        # this can be quite slow
-        image = tf.pad(image, [[0, 0], [0, 0], [1, 1], [1, 1]], mode='SYMMETRIC')
+        image = tf.pad(image, [[0, 0], [1, 1], [1, 1], [0, 0]], mode='SYMMETRIC')
         boxes = boxes + 1
 
     @under_name_scope()
@@ -160,7 +147,7 @@ def crop_and_resize(image, boxes, box_ind, crop_size, orig_image_dims, pad_borde
         Returns:
             y1x1y2x2
         """
-        x0, y0, x1, y1 = tf.split(boxes, 4, axis=1)
+        y0, x0, y1, x1 = tf.split(boxes, 4, axis=-1)
 
         spacing_w = (x1 - x0) / tf.cast(crop_shape[1], tf.float32)
         spacing_h = (y1 - y0) / tf.cast(crop_shape[0], tf.float32)
@@ -174,83 +161,34 @@ def crop_and_resize(image, boxes, box_ind, crop_size, orig_image_dims, pad_borde
 
         return tf.concat([ny0, nx0, ny0 + nh, nx0 + nw], axis=1)
 
-    # Expand bbox to a minium size of 1
-    # boxes_x1y1, boxes_x2y2 = tf.split(boxes, 2, axis=1)
-    # boxes_wh = boxes_x2y2 - boxes_x1y1
-    # boxes_center = tf.reshape((boxes_x2y2 + boxes_x1y1) * 0.5, [-1, 2])
-    # boxes_newwh = tf.maximum(boxes_wh, 1.)
-    # boxes_x1y1new = boxes_center - boxes_newwh * 0.5
-    # boxes_x2y2new = boxes_center + boxes_newwh * 0.5
-    # boxes = tf.concat([boxes_x1y1new, boxes_x2y2new], axis=1)
+    image_shape = tf.shape(image)[1:3]
 
-
-
-    boxes = transform_fpcoor_for_tf(boxes, orig_image_dims, [crop_size, crop_size])
-    image = tf.transpose(image, [0, 2, 3, 1])   # nhwc
-
-    # image = print_runtime_shape("image", image, prefix=prefix)
-    # boxes = print_runtime_shape("boxes (late)", boxes, prefix=prefix)
-    ret = tf.image.crop_and_resize(
-        image, boxes, tf.cast(box_ind, tf.int32),
+    boxes = transform_fpcoor_for_tf(boxes, image_shape, [crop_size, crop_size])
+    ret = tf.image.crop_and_resize(image, boxes, tf.cast(box_ind, tf.int32), 
         crop_size=[crop_size, crop_size])
-    ret = tf.transpose(ret, [0, 3, 1, 2])   # ncss
     return ret
 
+@under_name_scope()
+def permute_boxes_coords(boxes):
+  """
+    Args:
+      boxes Tensor where last axis is of dimension 4 
+    Returns:
+      boxes: Tensor where last axis is of dimension 4 
+  """
+  boxes = tf.unstack(boxes, axis=-1)
+  return tf.stack([ boxes[1], boxes[0], boxes[3], boxes[2] ], axis=-1)
 
-
-class RPNAnchors(namedtuple('_RPNAnchors', ['boxes', 'gt_labels', 'gt_boxes'])):
+class RPNGroundTruth(namedtuple('_RPNGroundTruth', ['boxes', 'gt_labels', 'gt_boxes'])):
     """
     boxes (FS x FS x NA x 4): The anchor boxes.
-    gt_labels (FS x FS x NA):
-    gt_boxes (FS x FS x NA x 4): Groundtruth boxes corresponding to each anchor.
+    gt_labels (BS X FS x FS x NA):
+    gt_boxes (BS X FS x FS x NA x 4): Groundtruth boxes corresponding to each anchor.
     """
     def encoded_gt_boxes(self):
-        return encode_bbox_target(self.gt_boxes, self.boxes)
+        gt_boxes = tf.unstack(self.gt_boxes, num=config.TRAIN.BATCH_SIZE_PER_GPU)
+        return tf.stack([encode_bbox_target(image_gt_boxes, self.boxes) for  image_gt_boxes in gt_boxes])
 
     def decode_logits(self, logits):
-        return decode_bbox_target(logits, self.boxes)
-
-    @under_name_scope()
-    def narrow_to_featuremap_dims(self, featuremap_dims):
-        """
-        Take in h and w of featuremap that we need to narrow to.
-        Separate batch implementation because we need to handle padding.
-        # Boxes don't have a batch_dim when this function is called - and neither should
-        """
-
-        slice3d = tf.concat([featuremap_dims, [-1]], axis=0)
-        slice4d = tf.concat([featuremap_dims, [-1, -1]], axis=0)
-
-        boxes = tf.slice(self.boxes, [0, 0, 0, 0], slice4d)
-        gt_labels = tf.slice(self.gt_labels, [0, 0, 0], slice3d)
-        gt_boxes = tf.slice(self.gt_boxes, [0, 0, 0, 0], slice4d)
-        return RPNAnchors(boxes, gt_labels, gt_boxes)
-
-
-if __name__ == '__main__':
-    """
-    Demonstrate what's wrong with tf.image.crop_and_resize:
-    """
-    import tensorflow.contrib.eager as tfe
-    tfe.enable_eager_execution()
-
-    # want to crop 2x2 out of a 5x5 image, and resize to 4x4
-    image = np.arange(25).astype('float32').reshape(5, 5)
-    boxes = np.asarray([[1, 1, 3, 3]], dtype='float32')
-    target = 4
-
-    print(crop_and_resize(
-        image[None, None, :, :], boxes, [0], target)[0][0])
-    """
-    Expected values:
-    4.5 5 5.5 6
-    7 7.5 8 8.5
-    9.5 10 10.5 11
-    12 12.5 13 13.5
-
-    You cannot easily get the above results with tf.image.crop_and_resize.
-    Try out yourself here:
-    """
-    print(tf.image.crop_and_resize(
-        image[None, :, :, None],
-        np.asarray([[1, 1, 2, 2]]) / 4.0, [0], [target, target])[0][:, :, 0])
+        pred_boxes = tf.unstack(logits, num=config.TRAIN.BATCH_SIZE_PER_GPU)
+        return tf.stack([decode_bbox_target(image_pred_boxes, self.boxes) for  image_pred_boxes in  pred_boxes])

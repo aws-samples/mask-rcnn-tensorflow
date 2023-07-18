@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 #  -*- coding: utf-8 -*-
 #  File: __init__.py
 
@@ -48,6 +46,8 @@ for _, module_name, _ in iter_modules(
        [_CURR_DIR]):
     srcpath = os.path.join(_CURR_DIR, module_name + '.py')
     if not os.path.isfile(srcpath):
+        continue
+    if module_name.endswith('_test'):
         continue
     if not module_name.startswith('_'):
         _global_import(module_name)

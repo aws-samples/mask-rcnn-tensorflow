@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: gpu.py
 
@@ -42,28 +40,45 @@ def get_num_gpu():
 
         built_with_cuda = tf.test.is_built_with_cuda()
         if not built_with_cuda and ret > 0:
-            logger.warn(message + "But TensorFlow was not built with CUDA support!")
+            logger.warn(message + "But TensorFlow was not built with CUDA support and could not use GPUs!")
         return ret
 
+    try:
+        # Use NVML to query device properties
+        with NVMLContext() as ctx:
+            nvml_num_dev = ctx.num_devices()
+    except Exception:
+        nvml_num_dev = None
+
     env = os.environ.get('CUDA_VISIBLE_DEVICES', None)
-    if env is not None:
-        return warn_return(len(env.split(',')), "Found non-empty CUDA_VISIBLE_DEVICES. ")
+    if env:
+        num_dev = len(env.split(','))
+        assert num_dev <= nvml_num_dev, \
+            "Only {} GPU(s) available, but CUDA_VISIBLE_DEVICES is set to {}".format(nvml_num_dev, env)
+        return warn_return(num_dev, "Found non-empty CUDA_VISIBLE_DEVICES. ")
+
     output, code = subproc_call("nvidia-smi -L", timeout=5)
     if code == 0:
         output = output.decode('utf-8')
         return warn_return(len(output.strip().split('\n')), "Found nvidia-smi. ")
+
+    if nvml_num_dev is not None:
+        return warn_return(nvml_num_dev, "NVML found nvidia devices. ")
+
+    # Fallback to TF
+    logger.info("Loading local devices by TensorFlow ...")
+
     try:
-        # Use NVML to query device properties
-        with NVMLContext() as ctx:
-            return warn_return(ctx.num_devices(), "NVML found nvidia devices. ")
-    except Exception:
-        # Fallback
-        # Note this will initialize all GPUs and therefore has side effect
-        # https://github.com/tensorflow/tensorflow/issues/8136
-        logger.info("Loading local devices by TensorFlow ...")
+        import tensorflow as tf
+        # available since TF 1.14
+        gpu_devices = tf.config.experimental.list_physical_devices('GPU')
+    except AttributeError:
         from tensorflow.python.client import device_lib
         local_device_protos = device_lib.list_local_devices()
-        return len([x.name for x in local_device_protos if x.device_type == 'GPU'])
+        # Note this will initialize all GPUs and therefore has side effect
+        # https://github.com/tensorflow/tensorflow/issues/8136
+        gpu_devices = [x.name for x in local_device_protos if x.device_type == 'GPU']
+    return len(gpu_devices)
 
 
 get_nr_gpu = get_num_gpu

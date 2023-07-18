@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: __init__.py
 
@@ -10,7 +8,6 @@ from tensorpack.utils import *
 from tensorpack.dataflow import *
 
 # dataflow can be used alone without installing tensorflow
-# TODO maybe separate dataflow to a new project if it's good enough
 
 # https://github.com/celery/kombu/blob/7d13f9b95d0b50c94393b962e6def928511bfda6/kombu/__init__.py#L34-L36
 STATICA_HACK = True
@@ -22,6 +19,7 @@ if STATICA_HACK:
     from tensorpack.tfutils import *
 
     from tensorpack.train import *
-    from tensorpack.graph_builder import InputDesc, ModelDesc, ModelDescBase
     from tensorpack.input_source import *
     from tensorpack.predict import *
+
+    from tensorpack.compat import tfv1

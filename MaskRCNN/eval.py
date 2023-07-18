@@ -6,20 +6,16 @@
 import itertools
 import sys
 import os
-import json
 import numpy as np
-from numba import jit
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import cv2
 import pycocotools.mask as cocomask
 import tqdm
-import tensorflow as tf
 from scipy import interpolate
 
 from tensorpack.callbacks import Callback
-from tensorpack.tfutils.common import get_tf_version_tuple
 from tensorpack.utils import logger
 from tensorpack.utils.utils import get_tqdm
 
@@ -60,7 +56,6 @@ def _scale_box(box, scale):
     scaled_box[3] = y_c + h_half
     return scaled_box
 
-@jit
 def _paste_mask(box, mask, shape):
     """
     Args:
@@ -70,40 +65,19 @@ def _paste_mask(box, mask, shape):
     Returns:
         A uint8 binary image of hxw.
     """
-    assert mask.shape[0] == mask.shape[1], mask.shape
-    if not cfg.RPN.SLOW_ACCURATE_MASK:
-        # This method (inspired by Detectron) is less accurate but fast.
-        # int() is floor
-        # box fpcoor=0.0 -> intcoor=0.0
-        x0, y0 = list(map(int, box[:2] + 0.5))
-        # box fpcoor=h -> intcoor=h-1, inclusive
-        x1, y1 = list(map(int, box[2:] - 0.5))    # inclusive
-        x1 = max(x0, x1)    # require at least 1x1
-        y1 = max(y0, y1)
+    
+    mask = np.pad(mask, [(1, 1), (1, 1)], mode='constant')
+    box = _scale_box(box, float(mask.shape[0]) / (mask.shape[0] - 2))
 
-        w = x1 + 1 - x0
-        h = y1 + 1 - y0
-
-        # rounding errors could happen here, because masks were not originally computed for this shape.
-        # but it's hard to do better, because the network does not know the "original" scale
-        mask = (cv2.resize(mask, (w, h)) > 0.5).astype('uint8')
-        ret = np.zeros(shape, dtype='uint8')
-        ret[y0:y1 + 1, x0:x1 + 1] = mask
-        return ret
-    else:
-        # This method is accurate but much slower.
-        mask = np.pad(mask, [(1, 1), (1, 1)], mode='constant')
-        box = _scale_box(box, float(mask.shape[0]) / (mask.shape[0] - 2))
-
-        mask_pixels = np.arange(0.0, mask.shape[0]) + 0.5
-        mask_continuous = interpolate.interp2d(mask_pixels, mask_pixels, mask, fill_value=0.0)
-        h, w = shape
-        ys = np.arange(0.0, h) + 0.5
-        xs = np.arange(0.0, w) + 0.5
-        ys = (ys - box[1]) / (box[3] - box[1]) * mask.shape[0]
-        xs = (xs - box[0]) / (box[2] - box[0]) * mask.shape[1]
-        res = mask_continuous(xs, ys)
-        return (res >= 0.5).astype('uint8')
+    mask_pixels = np.arange(0.0, mask.shape[0]) + 0.5
+    mask_continuous = interpolate.interp2d(mask_pixels, mask_pixels, mask, fill_value=0.0)
+    h, w = shape
+    ys = np.arange(0.0, h) + 0.5
+    xs = np.arange(0.0, w) + 0.5
+    ys = (ys - box[1]) / (box[3] - box[1]) * mask.shape[0]
+    xs = (xs - box[0]) / (box[2] - box[0]) * mask.shape[1]
+    res = mask_continuous(xs, ys)
+    return (res >= 0.5).astype('uint8')
 
 
 def predict_image(img, model_func):
@@ -210,13 +184,6 @@ def predict_dataflow(df, model_func, tqdm_bar=None):
                 bbox = list([float(b) for b in r.box])
                 score = round(float(r.score), 4)
 
-#                 print("A result")
-#                 print(f'image_id [{type(img_id)}] {img_id}')
-#                 print(f'class_id [{type(class_id)}] {class_id}')
-#                 print(f'bbox [{type(bbox)}] {bbox}')
-#                 print(f'bbox[0] [{type(bbox[0])}] {bbox[0]}')
-#                 print(f'score [{type(score)}] {score}')
-
                 res = {
                     'image_id': img_id,
                     'category_id': class_id,
@@ -266,13 +233,6 @@ def predict_dataflow_batch(df, model_func, tqdm_bar=None):
                     bbox = list([float(b) for b in r.box])
                     score = round(float(r.score), 4)
 
-#                     print("A result")
-#                     print(f'image_id [{type(img_id)}] {img_id}')
-#                     print(f'class_id [{type(class_id)}] {class_id}')
-#                     print(f'bbox [{type(bbox)}] {bbox}')
-#                     print(f'bbox[0] [{type(bbox[0])}] {bbox[0]}')
-#                     print(f'score [{type(score)}] {score}')
-
                     res = {
                         'image_id': img_id,
                         'category_id': class_id,
@@ -292,7 +252,7 @@ def predict_dataflow_batch(df, model_func, tqdm_bar=None):
     return all_results
 
 
-def multithread_predict_dataflow(dataflows, model_funcs):
+def multithread_predict_dataflow(dataflows, model_funcs, batched=True):
     """
     Running multiple `predict_dataflow` in multiple threads, and aggregate the results.
 
@@ -307,13 +267,20 @@ def multithread_predict_dataflow(dataflows, model_funcs):
     num_worker = len(model_funcs)
     assert len(dataflows) == num_worker
     if num_worker == 1:
-        return predict_dataflow(dataflows[0], model_funcs[0])
+        if batched:
+            local_results = predict_dataflow_batch(dataflows[0], model_funcs[0])
+        else:
+            local_results = predict_dataflow(dataflows[0], model_funcs[0])
+        return local_results
     kwargs = {'thread_name_prefix': 'EvalWorker'} if sys.version_info.minor >= 6 else {}
     with ThreadPoolExecutor(max_workers=num_worker, **kwargs) as executor, \
             tqdm.tqdm(total=sum([df.size() for df in dataflows])) as pbar:
         futures = []
         for dataflow, pred in zip(dataflows, model_funcs):
-            futures.append(executor.submit(predict_dataflow, dataflow, pred, pbar))
+            if batched:
+                futures.append(executor.submit(predict_dataflow_batch, dataflow, pred, pbar))
+            else:
+                futures.append(executor.submit(predict_dataflow, dataflow, pred, pbar))
         all_results = list(itertools.chain(*[fut.result() for fut in futures]))
         return all_results
 
@@ -366,13 +333,15 @@ class EvalCallback(Callback):
     def _setup_graph(self):
         num_gpu = cfg.TRAIN.NUM_GPUS
         if cfg.TRAINER == 'replicated':
-            # TF bug in version 1.11, 1.12: https://github.com/tensorflow/tensorflow/issues/22750
-            buggy_tf = get_tf_version_tuple() in [(1, 11), (1, 12)]
-
-            # Use two predictor threads per GPU to get better throughput
-            self.num_predictor = num_gpu if buggy_tf else num_gpu * 2
+            self.num_predictor = num_gpu
             self.predictors = [self._build_predictor(k % num_gpu) for k in range(self.num_predictor)]
-            self.dataflows = [get_eval_dataflow(self._eval_dataset,
+            if self.batched:
+                self.dataflows = [get_batched_eval_dataflow(self._eval_dataset,
+                                                shard=k, num_shards=self.num_predictor, 
+                                                batch_size=self.batch_size)
+                              for k in range(self.num_predictor)]
+            else:
+                self.dataflows = [get_eval_dataflow(self._eval_dataset,
                                                 shard=k, num_shards=self.num_predictor)
                               for k in range(self.num_predictor)]
         else:
@@ -403,7 +372,7 @@ class EvalCallback(Callback):
     def _eval(self):
         logdir = self._output_dir
         if cfg.TRAINER == 'replicated':
-            all_results = multithread_predict_dataflow(self.dataflows, self.predictors)
+            all_results = multithread_predict_dataflow(self.dataflows, self.predictors, self.batched)
         else:
             if self.batched:
                 local_results = predict_dataflow_batch(self.dataflow, self.predictor)
@@ -454,11 +423,7 @@ class AsyncEvalCallback(Callback):
     def _setup_graph(self):
         num_gpu = cfg.TRAIN.NUM_GPUS
         if cfg.TRAINER == 'replicated':
-            # TF bug in version 1.11, 1.12: https://github.com/tensorflow/tensorflow/issues/22750
-            buggy_tf = get_tf_version_tuple() in [(1, 11), (1, 12)]
-
-            # Use two predictor threads per GPU to get better throughput
-            self.num_predictor = num_gpu if buggy_tf else num_gpu * 2
+            self.num_predictor = num_gpu
             self.predictors = [self._build_predictor(k % num_gpu) for k in range(self.num_predictor)]
             self.dataflows = [get_eval_dataflow(self._eval_dataset,
                                                 shard=k, num_shards=self.num_predictor)
@@ -493,7 +458,7 @@ class AsyncEvalCallback(Callback):
     def _eval(self):
         logdir = self._output_dir
         if cfg.TRAINER == 'replicated':
-            all_results = multithread_predict_dataflow(self.dataflows, self.predictors)
+            all_results = multithread_predict_dataflow(self.dataflows, self.predictors, self.batched)
         else:
             if self.batched:
                 local_results = predict_dataflow_batch(self.dataflow, self.predictor)

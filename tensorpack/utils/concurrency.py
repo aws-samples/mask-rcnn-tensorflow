@@ -1,13 +1,12 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: concurrency.py
 
 # Some code taken from zxytim
 
+import sys
 import atexit
 import bisect
-import multiprocessing
+import multiprocessing as mp
 import platform
 import signal
 import threading
@@ -15,20 +14,15 @@ import weakref
 from contextlib import contextmanager
 import six
 from six.moves import queue
+import subprocess
 
 from . import logger
 from .argtools import log_once
 
-if six.PY2:
-    import subprocess32 as subprocess
-else:
-    import subprocess
-
 
 __all__ = ['StoppableThread', 'LoopThread', 'ShareSessionThread',
            'ensure_proc_terminate',
-           'OrderedResultGatherProc', 'OrderedContainer', 'DIE',
-           'mask_sigint', 'start_proc_mask_signal']
+           'start_proc_mask_signal']
 
 
 class StoppableThread(threading.Thread):
@@ -134,8 +128,8 @@ class ShareSessionThread(threading.Thread):
             yield None
 
     def start(self):
-        import tensorflow as tf
-        self._sess = tf.get_default_session()
+        from ..compat import tfv1
+        self._sess = tfv1.get_default_session()
         super(ShareSessionThread, self).start()
 
     def run(self):
@@ -171,7 +165,7 @@ def ensure_proc_terminate(proc):
         proc.terminate()
         proc.join()
 
-    assert isinstance(proc, multiprocessing.Process)
+    assert isinstance(proc, mp.Process)
     atexit.register(stop_proc_by_weak_ref, weakref.ref(proc))
 
 
@@ -198,11 +192,7 @@ def enable_death_signal(_warn=True):
 
 
 def is_main_thread():
-    if six.PY2:
-        return isinstance(threading.current_thread(), threading._MainThread)
-    else:
-        # a nicer solution with py3
-        return threading.current_thread() == threading.main_thread()
+    return threading.current_thread() == threading.main_thread()
 
 
 @contextmanager
@@ -225,7 +215,7 @@ def start_proc_mask_signal(proc):
     Start process(es) with SIGINT ignored.
 
     Args:
-        proc: (multiprocessing.Process or list)
+        proc: (mp.Process or list)
 
     Note:
         The signal mask is only applied when called from main thread.
@@ -235,12 +225,20 @@ def start_proc_mask_signal(proc):
 
     with mask_sigint():
         for p in proc:
+            if isinstance(p, mp.Process):
+                if sys.version_info < (3, 4) or mp.get_start_method() == 'fork':
+                    log_once("""
+Starting a process with 'fork' method is efficient but not safe and may cause deadlock or crash.
+Use 'forkserver' or 'spawn' method instead if you run into such issues.
+See https://docs.python.org/3/library/multiprocessing.html#contexts-and-start-methods on how to set them.
+""".replace("\n", ""),
+'warn')  # noqa
             p.start()
 
 
 def subproc_call(cmd, timeout=None):
     """
-    Execute a command with timeout, and return both STDOUT/STDERR.
+    Execute a command with timeout, and return STDOUT and STDERR
 
     Args:
         cmd(str): the command to execute.
@@ -256,8 +254,11 @@ def subproc_call(cmd, timeout=None):
         return output, 0
     except subprocess.TimeoutExpired as e:
         logger.warn("Command '{}' timeout!".format(cmd))
-        logger.warn(e.output.decode('utf-8'))
-        return e.output, -1
+        if e.output:
+            logger.warn(e.output.decode('utf-8'))
+            return e.output, -1
+        else:
+            return "", -1
     except subprocess.CalledProcessError as e:
         logger.warn("Command '{}' failed, return code={}".format(cmd, e.returncode))
         logger.warn(e.output.decode('utf-8'))
@@ -310,7 +311,7 @@ class OrderedContainer(object):
         return rank, ret
 
 
-class OrderedResultGatherProc(multiprocessing.Process):
+class OrderedResultGatherProc(mp.Process):
     """
     Gather indexed data from a data queue, and produce results with the
     original index-based order.
@@ -319,7 +320,7 @@ class OrderedResultGatherProc(multiprocessing.Process):
     def __init__(self, data_queue, nr_producer, start=0):
         """
         Args:
-            data_queue(multiprocessing.Queue): a queue which contains datapoints.
+            data_queue(mp.Queue): a queue which contains datapoints.
             nr_producer(int): number of producer processes. This process will
                 terminate after receiving this many of :class:`DIE` sentinel.
             start(int): the rank of the first object
@@ -327,7 +328,7 @@ class OrderedResultGatherProc(multiprocessing.Process):
         super(OrderedResultGatherProc, self).__init__()
         self.data_queue = data_queue
         self.ordered_container = OrderedContainer(start=start)
-        self.result_queue = multiprocessing.Queue()
+        self.result_queue = mp.Queue()
         self.nr_producer = nr_producer
 
     def run(self):

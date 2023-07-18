@@ -33,8 +33,5 @@ An overview of the coco datasets and tools for understanding how the data is con
 - Pycocotools: a set of tools developed by the COCO team for loading and visualizing COCO data
 - Cocosubsetter: A small tool developed for these notebooks that can subset COCO data for model debugging
 
-#### tensor_inspection
-Often when training a model it is useful to see what individual tensors in the graph are doing. This can be tricky with Tensorpack, so we include a notebook that covers how to output, store, and analyze specific tensors at runtime.
-
 #### visualization
 The notebook allows the user to see what their model is finding in the images, and compare their performance to the ground truth in the COCO data. Also allows users to load their own images.

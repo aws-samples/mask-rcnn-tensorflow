@@ -1,22 +1,16 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: group.py
 
 
 import traceback
 from contextlib import contextmanager
-from time import time as timer
-import six
-import tensorflow as tf
+from time import perf_counter as timer  # noqa
+from ..compat import tfv1 as tf
 
 from ..utils import logger
 from ..utils.utils import humanize_time_delta
 from .base import Callback
 from .hooks import CallbackToHook
-
-if six.PY3:
-    from time import perf_counter as timer  # noqa
 
 __all__ = ['Callbacks']
 
@@ -39,7 +33,7 @@ class CallbackTimeLogger(object):
     def log(self):
 
         """ log the time of some heavy callbacks """
-        if self.tot < 3:
+        if self.tot < 2:
             return
         msgs = []
         for name, t in self.times:
@@ -53,7 +47,9 @@ class CallbackTimeLogger(object):
 class Callbacks(Callback):
     """
     A container to hold all callbacks, and trigger them iteratively.
-    Note that it does nothing to before_run/after_run.
+
+    This is only used by the base trainer to run all the callbacks.
+    Users do not need to use this class.
     """
 
     def __init__(self, cbs):

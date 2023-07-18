@@ -1,20 +1,18 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: sessinit.py
 
-
+import os
 import numpy as np
 import six
-import tensorflow as tf
 
+from ..compat import tfv1 as tf
 from ..utils import logger
 from .common import get_op_tensor_name
 from .varmanip import SessionUpdate, get_checkpoint_path, get_savename_from_varname, is_training_name
 
 __all__ = ['SessionInit', 'ChainInit',
            'SaverRestore', 'SaverRestoreRelaxed', 'DictRestore',
-           'JustCurrentSession', 'get_model_loader']
+           'JustCurrentSession', 'get_model_loader', 'SmartInit']
 
 
 class SessionInit(object):
@@ -93,12 +91,12 @@ class SaverRestore(SessionInit):
     """
     Restore a tensorflow checkpoint saved by :class:`tf.train.Saver` or :class:`ModelSaver`.
     """
-    def __init__(self, model_path, prefix=None, ignore=[]):
+    def __init__(self, model_path, prefix=None, ignore=()):
         """
         Args:
             model_path (str): a model name (model-xxxx) or a ``checkpoint`` file.
             prefix (str): during restore, add a ``prefix/`` for every variable in this checkpoint.
-            ignore (list[str]): list of tensor names that should be ignored during loading, e.g. learning-rate
+            ignore (tuple[str]): tensor names that should be ignored during loading, e.g. learning-rate
         """
         if model_path.endswith('.npy') or model_path.endswith('.npz'):
             logger.warn("SaverRestore expect a TF checkpoint, but got a model path '{}'.".format(model_path) +
@@ -167,18 +165,32 @@ class SaverRestoreRelaxed(SaverRestore):
 
         It allows upcasting certain variables, or reshape certain
         variables when there is a mismatch that can be fixed.
+
+        When variable shape and value shape do not match, it will print a
+        warning but will not crash.
+
         Another advantage is that it doesn't add any new ops to the graph.
-        But it is also slower than :class:`SaverRestore`.
     """
+    def _setup_graph(self):
+        # no need to setup saver like the parent class
+        pass
+
     def _run_init(self, sess):
         logger.info(
             "Restoring checkpoint from {} ...".format(self.path))
 
+        matched_pairs = []
+
         def f(reader, name, v):
             val = reader.get_tensor(name)
-            SessionUpdate.load_value_to_var(v, val)
+            val = SessionUpdate.relaxed_value_for_var(val, v, ignore_mismatch=True)
+            if val is not None:
+                matched_pairs.append((v, val))
+
         with sess.as_default():
             self._match_vars(f)
+            upd = SessionUpdate(sess, [x[0] for x in matched_pairs])
+            upd.update({x[0].name: x[1] for x in matched_pairs})
 
 
 class DictRestore(SessionInit):
@@ -186,24 +198,33 @@ class DictRestore(SessionInit):
     Restore variables from a dictionary.
     """
 
-    def __init__(self, variable_dict):
+    def __init__(self, variable_dict, ignore_mismatch=False):
         """
         Args:
             variable_dict (dict): a dict of {name: value}
+            ignore_mismatch (bool): ignore failures when the value and the
+                variable does not match in their shapes.
+                If False, it will throw exception on such errors.
+                If True, it will only print a warning.
         """
         assert isinstance(variable_dict, dict), type(variable_dict)
         # use varname (with :0) for consistency
         self._prms = {get_op_tensor_name(n)[1]: v for n, v in six.iteritems(variable_dict)}
+        self._ignore_mismatch = ignore_mismatch
 
     def _run_init(self, sess):
         variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+        variable_names_list = [k.name for k in variables]
 
-        variable_names = set([k.name for k in variables])
+        variable_names = set(variable_names_list)
         param_names = set(six.iterkeys(self._prms))
 
-        intersect = variable_names & param_names
+        # intersect has the original ordering of variables
+        intersect = [v for v in variable_names_list if v in param_names]
 
-        logger.info("Variables to restore from dict: {}".format(', '.join(map(str, intersect))))
+        # use opname (without :0) for clarity in logging
+        logger.info("Variables to restore from dict: {}".format(
+            ', '.join(get_op_tensor_name(x)[0] for x in intersect)))
 
         mismatch = MismatchLogger('graph', 'dict')
         for k in sorted(variable_names - param_names):
@@ -215,7 +236,7 @@ class DictRestore(SessionInit):
             mismatch.add(k)
         mismatch.log()
 
-        upd = SessionUpdate(sess, [v for v in variables if v.name in intersect])
+        upd = SessionUpdate(sess, [v for v in variables if v.name in intersect], ignore_mismatch=self._ignore_mismatch)
         logger.info("Restoring {} variables from dict ...".format(len(intersect)))
         upd.update({name: value for name, value in six.iteritems(self._prms) if name in intersect})
 
@@ -243,21 +264,52 @@ class ChainInit(SessionInit):
             i._run_init(sess)
 
 
-def get_model_loader(filename):
+def SmartInit(obj, *, ignore_mismatch=False):
     """
-    Get a corresponding model loader by looking at the file name.
+    Create a :class:`SessionInit` to be loaded to a session,
+    automatically from any supported objects, with some smart heuristics.
+    The object can be:
+
+    + A TF checkpoint
+    + A dict of numpy arrays
+    + A npz file, to be interpreted as a dict
+    + An empty string or None, in which case the sessinit will be a no-op
+    + A list of supported objects, to be initialized one by one
+
+    Args:
+        obj: a supported object
+        ignore_mismatch (bool): ignore failures when the value and the
+            variable does not match in their shapes.
+            If False, it will throw exception on such errors.
+            If True, it will only print a warning.
 
     Returns:
-        SessInit: either a :class:`DictRestore` (if name ends with 'npy/npz') or
-        :class:`SaverRestore` (otherwise).
+        SessionInit:
     """
-    assert isinstance(filename, six.string_types), filename
-    if filename.endswith('.npy'):
-        assert tf.gfile.Exists(filename), filename
-        return DictRestore(np.load(filename, encoding='latin1').item())
-    elif filename.endswith('.npz'):
-        assert tf.gfile.Exists(filename), filename
-        obj = np.load(filename)
-        return DictRestore(dict(obj))
-    else:
-        return SaverRestore(filename)
+    if not obj:
+        return JustCurrentSession()
+    if isinstance(obj, list):
+        return ChainInit([SmartInit(x, ignore_mismatch=ignore_mismatch) for x in obj])
+    if isinstance(obj, six.string_types):
+        obj = os.path.expanduser(obj)
+        if obj.endswith(".npy") or obj.endswith(".npz"):
+            assert tf.gfile.Exists(obj), "File {} does not exist!".format(obj)
+            filename = obj
+            logger.info("Loading dictionary from {} ...".format(filename))
+            if filename.endswith('.npy'):
+                obj = np.load(filename, encoding='latin1').item()
+            elif filename.endswith('.npz'):
+                obj = dict(np.load(filename))
+        elif len(tf.gfile.Glob(obj + "*")):
+            # Assume to be a TF checkpoint.
+            # A TF checkpoint must be a prefix of an actual file.
+            return (SaverRestoreRelaxed if ignore_mismatch else SaverRestore)(obj)
+        else:
+            raise ValueError("Invalid argument to SmartInit: " + obj)
+
+    if isinstance(obj, dict):
+        return DictRestore(obj, ignore_mismatch=ignore_mismatch)
+    raise ValueError("Invalid argument to SmartInit: " + type(obj))
+
+
+get_model_loader = SmartInit

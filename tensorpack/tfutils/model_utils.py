@@ -1,19 +1,17 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: model_utils.py
 # Author: tensorpack contributors
 
-import tensorflow as tf
+from ..compat import tfv1 as tf
 from tabulate import tabulate
 from termcolor import colored
 
+from .common import get_op_tensor_name
 from ..utils import logger
 
 __all__ = []
 
 
-# TODO should also describe model_variables
 def describe_trainable_vars():
     """
     Print a description of the current model parameters.
@@ -41,16 +39,17 @@ def describe_trainable_vars():
 
         total += ele
         total_bytes += ele * v.dtype.size
-        data.append([v.name, shape, ele, v.device, v.dtype.base_dtype.name])
-    headers = ['name', 'shape', 'dim', 'device', 'dtype']
+        data.append([get_op_tensor_name(v.name)[0], shape, ele, v.device, v.dtype.base_dtype.name])
+    headers = ['name', 'shape', '#elements', 'device', 'dtype']
 
-    dtypes = set([x[4] for x in data])
-    if len(dtypes) == 1:
+    dtypes = list({x[4] for x in data})
+    if len(dtypes) == 1 and dtypes[0] == "float32":
+        # don't log the dtype if all vars are float32 (default dtype)
         for x in data:
             del x[4]
         del headers[4]
 
-    devices = set([x[3] for x in data])
+    devices = {x[3] for x in data}
     if len(devices) == 1:
         # don't log the device if all vars on the same device
         for x in data:
@@ -61,9 +60,11 @@ def describe_trainable_vars():
 
     size_mb = total_bytes / 1024.0**2
     summary_msg = colored(
-        "\nTotal #vars={}, #params={}, size={:.02f}MB".format(
-            len(data), total, size_mb), 'cyan')
-    logger.info(colored("Trainable Variables: \n", 'cyan') + table + summary_msg)
+        "\nNumber of trainable variables: {}".format(len(data)) +
+        "\nNumber of parameters (elements): {}".format(total) +
+        "\nStorage space needed for all trainable variables: {:.02f}MB".format(size_mb),
+        'cyan')
+    logger.info(colored("List of Trainable Variables: \n", 'cyan') + table + summary_msg)
 
 
 def get_shape_str(tensors):
@@ -78,9 +79,8 @@ def get_shape_str(tensors):
     if isinstance(tensors, (list, tuple)):
         for v in tensors:
             assert isinstance(v, (tf.Tensor, tf.Variable)), "Not a tensor: {}".format(type(v))
-        shape_str = ",".join(
-            map(lambda x: str(x.get_shape().as_list()), tensors))
+        shape_str = ", ".join(map(get_shape_str, tensors))
     else:
         assert isinstance(tensors, (tf.Tensor, tf.Variable)), "Not a tensor: {}".format(type(tensors))
-        shape_str = str(tensors.get_shape().as_list())
+        shape_str = str(tensors.get_shape().as_list()).replace("None", "?")
     return shape_str

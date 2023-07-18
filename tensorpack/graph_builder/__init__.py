@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 #  -*- coding: utf-8 -*-
 #  File: __init__.py
 
@@ -10,8 +8,9 @@ if STATICA_HACK:
     from .model_desc import *
     from .training import *
     from .distributed import *
-    from .predict import *
     from .utils import *
+
+from .model_desc import ModelDesc, ModelDescBase
 
 from pkgutil import iter_modules
 import os

@@ -1,16 +1,15 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: param.py
 
 
 import operator
 import os
+import numpy as np
 from abc import ABCMeta, abstractmethod
 from collections import deque
 import six
-import tensorflow as tf
 
+from ..compat import tfv1
 from ..tfutils.common import get_op_tensor_name
 from ..utils import logger
 from .base import Callback
@@ -56,11 +55,11 @@ class HyperParam(object):
 class GraphVarParam(HyperParam):
     """ A variable in the graph (e.g. learning_rate) can be a hyperparam."""
 
-    def __init__(self, name, shape=[]):
+    def __init__(self, name, shape=()):
         """
         Args:
             name(str): name of the variable.
-            shape(list): shape of the variable.
+            shape(tuple): shape of the variable.
         """
         self.name = name
         self.shape = shape
@@ -68,7 +67,7 @@ class GraphVarParam(HyperParam):
 
     def setup_graph(self):
         """ Will setup the assign operator for that variable. """
-        all_vars = tf.global_variables() + tf.local_variables()
+        all_vars = tfv1.global_variables() + tfv1.local_variables()
         for v in all_vars:
             if v.name == self.var_name:
                 self.var = v
@@ -78,6 +77,10 @@ class GraphVarParam(HyperParam):
 
     def set_value(self, v):
         """ Assign the variable a new value. """
+        if not self.var.dtype.is_floating and isinstance(v, float):
+            raise ValueError(
+                "HyperParam {} has type '{}'. Cannot update it using float values.".format(
+                    self.name, self.var.dtype))
         self.var.load(v)
 
     def get_value(self):
@@ -105,7 +108,7 @@ class ObjAttrParam(HyperParam):
     def set_value(self, v):
         setattr(self.obj, self.attrname, v)
 
-    def get_value(self, v):
+    def get_value(self):
         return getattr(self.obj, self.attrname)
 
 
@@ -153,8 +156,7 @@ class HyperParamSetter(Callback):
         """
         ret = self._get_value_to_set()
         if ret is not None and ret != self._last_value:
-            if self.epoch_num != self._last_epoch_set:
-                # Print this message at most once every epoch
+            if self.epoch_num != self._last_epoch_set:  # Print this message at most once every epoch
                 if self._last_value is None:
                     logger.info("[HyperParamSetter] At global_step={}, {} is set to {:.6f}".format(
                         self.global_step, self.param.readable_name, ret))
@@ -232,7 +234,8 @@ class ScheduledHyperParamSetter(HyperParamSetter):
     Set hyperparameters by a predefined epoch-based schedule.
     """
 
-    def __init__(self, param, schedule, interp=None, step_based=False):
+    def __init__(self, param, schedule, interp=None, step_based=False,
+                 set_at_beginning=True):
         """
         Args:
             param: same as in :class:`HyperParamSetter`.
@@ -248,6 +251,14 @@ class ScheduledHyperParamSetter(HyperParamSetter):
                 every time this callback is triggered.
             step_based (bool): interpret ``schedule`` as (step, value) instead
                 of (epoch, value).
+            set_at_beginning (bool): at the start of training, the current value
+                may be different from the expected value according to the
+                schedule.
+                If this option is True, set the value anyway even though the current
+                epoch/step is not at the scheduled time.
+                If False, the value will only be set according to the
+                schedule, i.e. it will only be set if the current epoch/step
+                is at the scheduled time.
 
         Example:
             .. code-block:: python
@@ -261,15 +272,42 @@ class ScheduledHyperParamSetter(HyperParamSetter):
             assert interp == 'linear'
         self.interp = interp
         self._step = step_based
+        self._set_at_beginning = set_at_beginning
         super(ScheduledHyperParamSetter, self).__init__(param)
 
-    def _get_value_to_set(self):
-        refnum = self.global_step if self._step else self.epoch_num
+    def _get_value_to_set(self):  # override parent
+        return self._get_value_to_set_at_point(self._current_point())
+
+    def _current_point(self):
+        return self.global_step if self._step else self.epoch_num
+
+    def _check_value_at_beginning(self):
+        v = None
+        # we are at `before_train`, therefore the epoch/step associated with `current_point` has finished.
+        for p in range(0, self._current_point() + 1):
+            v = self._get_value_to_set_at_point(p) or v
+        actual_value = self.param.get_value()
+        current_point = "step" if self._step else "epoch" + str(self._current_point())
+        if v is not None and not np.isclose(v, actual_value):
+            logger.warn("According to scheduler {}, parameter '{}' should become {:.7g} at the current point ({}). "
+                        "However its current value is {:.7g}. ".format(
+                            self, self.param.readable_name, v, current_point, actual_value))
+            if self._set_at_beginning:
+                logger.info("Setting '{}' to {:.7g}.".format(self.param.readable_name, v))
+                self.param.set_value(v)
+            else:
+                logger.warn("If there is no other scheduler being used, you may want to check whether your "
+                            "initialization of the parameter is as expected")
+
+    def _get_value_to_set_at_point(self, point):
+        """
+        Using schedule, compute the value to be set at a given point.
+        """
         laste, lastv = None, None
         for e, v in self.schedule:
-            if e == refnum:
+            if e == point:
                 return v    # meet the exact boundary, return directly
-            if e > refnum:
+            if e > point:
                 break
             laste, lastv = e, v
         if laste is None or laste == e:
@@ -278,8 +316,12 @@ class ScheduledHyperParamSetter(HyperParamSetter):
         if self.interp is None:
             # If no interpolation, nothing to do.
             return None
-        v = (refnum - laste) * 1. / (e - laste) * (v - lastv) + lastv
+        v = (point - laste) * 1. / (e - laste) * (v - lastv) + lastv
         return v
+
+    def _before_train(self):
+        super(ScheduledHyperParamSetter, self)._before_train()
+        self._check_value_at_beginning()
 
     def _trigger_epoch(self):
         if not self._step:
@@ -288,6 +330,9 @@ class ScheduledHyperParamSetter(HyperParamSetter):
     def _trigger_step(self):
         if self._step:
             self.trigger()
+
+    def __str__(self):
+        return "ScheduledHyperParamSetter(schedule={})".format(self.schedule)
 
 
 class HyperParamSetterWithFunc(HyperParamSetter):

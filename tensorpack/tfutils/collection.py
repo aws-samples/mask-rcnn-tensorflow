@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: collection.py
 
@@ -7,7 +5,8 @@
 from contextlib import contextmanager
 from copy import copy
 import six
-import tensorflow as tf
+
+from ..compat import tfv1 as tf
 
 from ..utils import logger
 from ..utils.argtools import memoized
@@ -27,7 +26,7 @@ def backup_collection(keys=None):
         dict: the backup
     """
     if keys is None:
-        keys = tf.get_default_graph().get_all_collection_keys()
+        keys = tf.compat.v1.get_default_graph().get_all_collection_keys()
     ret = {}
     assert isinstance(keys, (list, tuple, set))
     for k in keys:
@@ -81,7 +80,7 @@ class CollectionGuard(object):
     original = None
 
     def __init__(self, name, check_diff,
-                 freeze_keys=[],
+                 freeze_keys=(),
                  diff_whitelist=None):
         """
         Args:
@@ -136,15 +135,15 @@ class CollectionGuard(object):
             if k in self._whitelist or k in self._freeze_keys:
                 continue
             if k not in self.original:
-                newly_created.append(self._key_name(k))
+                newly_created.append((self._key_name(k), len(v)))
             else:
                 old_v = self.original[k]
                 if len(old_v) != len(v):
                     size_change.append((self._key_name(k), len(old_v), len(v)))
         if newly_created:
             logger.info(
-                "New collections created in tower {}: {}".format(
-                    self._name, ', '.join(newly_created)))
+                "New collections created in tower {}: ".format(self._name) +
+                ', '.join(["{} of size {}".format(key, size) for key, size in newly_created]))
         if size_change:
             logger.info(
                 "Size of these collections were changed in {}: {}".format(

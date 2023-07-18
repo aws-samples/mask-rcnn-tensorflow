@@ -1,12 +1,10 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: symbolic_functions.py
 
 
 import tensorflow as tf
 
-from ..utils.develop import deprecated
+from ..compat import tfv1
 
 __all__ = ['print_stat', 'rms']
 
@@ -32,15 +30,14 @@ def rms(x, name=None):
     """
     if name is None:
         name = x.op.name + '/rms'
-        with tf.name_scope(None):   # name already contains the scope
+        with tfv1.name_scope(None):   # name already contains the scope
             return tf.sqrt(tf.reduce_mean(tf.square(x)), name=name)
     return tf.sqrt(tf.reduce_mean(tf.square(x)), name=name)
 
 
 # don't hurt to leave it here
-@deprecated("Please implement it by yourself.", "2018-04-28")
 def psnr(prediction, ground_truth, maxp=None, name='psnr'):
-    """`Peek Signal to Noise Ratio <https://en.wikipedia.org/wiki/Peak_signal-to-noise_ratio>`_.
+    """`Peak Signal to Noise Ratio <https://en.wikipedia.org/wiki/Peak_signal-to-noise_ratio>`_.
 
     .. math::
 
@@ -59,8 +56,8 @@ def psnr(prediction, ground_truth, maxp=None, name='psnr'):
 
     def log10(x):
         with tf.name_scope("log10"):
-            numerator = tf.log(x)
-            denominator = tf.log(tf.constant(10, dtype=numerator.dtype))
+            numerator = tf.math.log(x)
+            denominator = tf.math.log(tf.constant(10, dtype=numerator.dtype))
             return numerator / denominator
 
     mse = tf.reduce_mean(tf.square(prediction - ground_truth))

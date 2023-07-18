@@ -1,9 +1,0 @@
-set:
-  maskrcnn:
-    gpus: 16
-    batch_size_per_gpu: 4
-
-append:
-  global:
-    name: -16x4
-

@@ -1,9 +1,0 @@
-set:
-  maskrcnn:
-    gpus: 32
-    batch_size_per_gpu: 4
-    gradient_clip: 1.5 # set it to zero to disable gradient clipping
-
-append:
-  global:
-    name: -32x4

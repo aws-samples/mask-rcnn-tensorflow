@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: inference_runner.py
 
@@ -7,15 +5,13 @@
 import itertools
 import sys
 from contextlib import contextmanager
-import tensorflow as tf
 import tqdm
-from six.moves import range
 from tensorflow.python.training.monitored_session import _HookedSession as HookedSession
 
+from ..compat import tfv1 as tf
 from ..dataflow.base import DataFlow
 from ..input_source import FeedInput, InputSource, QueueInput, StagingInput
 from ..tfutils.tower import PredictTowerContext
-from ..tfutils.common import tfv1
 from ..utils import logger
 from ..utils.utils import get_tqdm_kwargs
 from .base import Callback
@@ -30,7 +26,7 @@ def _device_from_int(dev):
     return '/gpu:{}'.format(dev) if dev >= 0 else '/cpu:0'
 
 
-class InferencerToHook(tfv1.train.SessionRunHook):
+class InferencerToHook(tf.train.SessionRunHook):
     def __init__(self, inf, fetches):
         self._inf = inf
         self._fetches = fetches
@@ -115,9 +111,9 @@ class InferenceRunner(InferenceRunnerBase):
             input (InputSource or DataFlow): The :class:`InputSource` to run
                 inference on.  If given a DataFlow, will use :class:`FeedInput`.
             infs (list): a list of :class:`Inferencer` instances.
-            tower_name (str): the name scope of the tower to build. Need to set a
-                different one if multiple InferenceRunner are used.
-            tower_func (tfutils.TowerFuncWrapper or None): the tower function to be used to build the graph.
+            tower_name (str): the name scope of the tower to build.
+                If multiple InferenceRunner are used, each needs a different tower_name.
+            tower_func (tfutils.TowerFunc or None): the tower function to be used to build the graph.
                 By defaults to call `trainer.tower_func` under a `training=False` TowerContext,
                 but you can change it to a different tower function
                 if you need to inference with several different graphs.
@@ -144,13 +140,13 @@ class InferenceRunner(InferenceRunnerBase):
         if self._tower_func is None:
             assert self.trainer.tower_func is not None, "You must set tower_func of the trainer to use InferenceRunner!"
             self._tower_func = self.trainer.tower_func
-        input_callbacks = self._input_source.setup(self._tower_func.inputs_desc)
+        input_callbacks = self._input_source.setup(self._tower_func.input_signature)
 
         vs_name = self.trainer._vs_name_for_predictor(self._device_id)
         logger.info("[InferenceRunner] Building tower '{}' on device {} {}...".format(
             self._tower_name, self._device,
             "with variable scope '{}'".format(vs_name) if vs_name else ''))
-        with tf.variable_scope(tf.get_variable_scope(), reuse=True), \
+        with tf.compat.v1.variable_scope (tf.get_variable_scope(), reuse=True), \
                 tf.device(self._device), \
                 PredictTowerContext(self._tower_name, vs_name=vs_name):
             self._tower_func(*self._input_source.get_input_tensors())
@@ -197,9 +193,9 @@ class DataParallelInferenceRunner(InferenceRunnerBase):
         Args:
             input (DataFlow or QueueInput)
             gpus (int or list[int]): #gpus, or list of GPU id
-            tower_name (str): the name scope of the tower to build. Need to set a
-                different one if multiple InferenceRunner are used.
-            tower_func (tfutils.TowerFuncWrapper or None): the tower function to be used to build the graph.
+            tower_name (str): the name scope of the tower to build.
+                If multiple InferenceRunner are used, each needs a different tower_name.
+            tower_func (tfutils.TowerFunc or None): the tower function to be used to build the graph.
                 The tower function will be called under a `training=False` TowerContext.
                 The default is `trainer.tower_func`,
                 but you can change it to a different tower function
@@ -226,8 +222,8 @@ class DataParallelInferenceRunner(InferenceRunnerBase):
             assert self.trainer.tower_func is not None, "You must set tower_func of the trainer to use InferenceRunner!"
             self._tower_func = self.trainer.tower_func
 
-        input_callbacks = self._input_source.setup(self._tower_func.inputs_desc)
-        with tf.variable_scope(tf.get_variable_scope(), reuse=True):
+        input_callbacks = self._input_source.setup(self._tower_func.input_signature)
+        with tf.compat.v1.variable_scope (tf.get_variable_scope(), reuse=True):
             for idx, dev in enumerate(self._devices):
                 vs_name = self.trainer._vs_name_for_predictor(idx)
                 with tf.device(dev), PredictTowerContext(
@@ -259,13 +255,13 @@ class DataParallelInferenceRunner(InferenceRunnerBase):
         self._hooks.append(h)
         self._hooks_parallel.append(h)
 
-    class InferencerToHookDataParallel(InferencerToHook):
+    class _InferencerToHookDataParallel(InferencerToHook):
         def __init__(self, inf, fetches, size):
             """
             Args:
                 size(int): number of tensors to fetch per tower
             """
-            super(DataParallelInferenceRunner.InferencerToHookDataParallel, self).__init__(inf, fetches)
+            super(DataParallelInferenceRunner._InferencerToHookDataParallel, self).__init__(inf, fetches)
             assert len(self._fetches) % size == 0
             self._sz = size
 
@@ -279,7 +275,7 @@ class DataParallelInferenceRunner(InferenceRunnerBase):
         out_names = inf.get_fetches()
         sz = len(out_names)
         fetches = list(itertools.chain(*[t.get_tensors(out_names) for t in self._handles]))
-        return self.InferencerToHookDataParallel(inf, fetches, sz)
+        return self._InferencerToHookDataParallel(inf, fetches, sz)
 
     def _build_hook(self, inf):
         out_names = inf.get_fetches()

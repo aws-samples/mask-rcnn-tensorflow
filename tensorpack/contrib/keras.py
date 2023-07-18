@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: keras.py
 
@@ -42,7 +40,7 @@ class KerasModelCaller(object):
         self.get_model = get_model
         self.cached_model = None
 
-    def __call__(self, input_tensors):
+    def __call__(self, *input_tensors):
         """
         Args:
             input_tensors ([tf.Tensor])
@@ -51,12 +49,12 @@ class KerasModelCaller(object):
         """
         reuse = tf.get_variable_scope().reuse
 
-        old_trainable_names = set([x.name for x in tf.trainable_variables()])
+        old_trainable_names = {x.name for x in tf.trainable_variables()}
         trainable_backup = backup_collection([tf.GraphKeys.TRAINABLE_VARIABLES])
         update_ops_backup = backup_collection([tf.GraphKeys.UPDATE_OPS])
 
         def post_process_model(model):
-            added_trainable_names = set([x.name for x in tf.trainable_variables()])
+            added_trainable_names = {x.name for x in tf.trainable_variables()}
             restore_collection(trainable_backup)
 
             for v in model.weights:
@@ -64,7 +62,7 @@ class KerasModelCaller(object):
                 # We put M.weights into the collection instead.
                 if v.name not in old_trainable_names and v.name in added_trainable_names:
                     tf.add_to_collection(tf.GraphKeys.TRAINABLE_VARIABLES, v)
-            new_trainable_names = set([x.name for x in tf.trainable_variables()])
+            new_trainable_names = {x.name for x in tf.trainable_variables()}
 
             for n in added_trainable_names:
                 if n not in new_trainable_names:
@@ -83,7 +81,7 @@ class KerasModelCaller(object):
             # starting from some versions, tf.keras starts to prepend name scope to variable names ..
             @contextmanager
             def clear_tower0_name_scope():
-                ns = tf.get_default_graph().get_name_scope()
+                ns = tf.compat.v1.get_default_graph().get_name_scope()
                 if ns == 'tower0':
                     with tf.name_scope('/'):
                         yield
@@ -100,7 +98,7 @@ class KerasModelCaller(object):
             # NOTE: ctx.is_training won't be useful inside model,
             # because inference will always use the cached Keras model
             model = self.cached_model
-            outputs = model.call(input_tensors)
+            outputs = model.call(*input_tensors)
         else:
             # create new Keras model if not reuse
             model = self.get_model(*input_tensors)
@@ -108,6 +106,8 @@ class KerasModelCaller(object):
 
         post_process_model(model)
 
+        if isinstance(outputs, list) and len(outputs) == 1:
+            return outputs[0]
         return outputs
 
 
@@ -143,7 +143,7 @@ class KerasPhaseCallback(Callback):
 
 def setup_keras_trainer(
         trainer, get_model,
-        inputs_desc, targets_desc,
+        input_signature, target_signature,
         input, optimizer, loss, metrics):
     """
     Args:
@@ -161,7 +161,7 @@ def setup_keras_trainer(
     assert isinstance(metrics, list), metrics
     model_caller = KerasModelCaller(get_model)
 
-    nr_inputs = len(inputs_desc)
+    nr_inputs = len(input_signature)
 
     def get_cost(*inputs):
         ctx = get_current_tower_context()
@@ -169,7 +169,7 @@ def setup_keras_trainer(
         target_tensors = list(inputs[nr_inputs:])
         # TODO mapping between target tensors & output tensors
 
-        outputs = model_caller(input_tensors)
+        outputs = model_caller(*input_tensors)
 
         if isinstance(outputs, tf.Tensor):
             outputs = [outputs]
@@ -213,33 +213,32 @@ def setup_keras_trainer(
         return total_loss
 
     trainer.setup_graph(
-        inputs_desc + targets_desc,
+        input_signature + target_signature,
         input,
         get_cost,
         lambda: optimizer)
-    if len(keras.backend.learning_phase().consumers()) > 0:
+    if isinstance(keras.backend.learning_phase(), tf.Tensor) and len(keras.backend.learning_phase().consumers()) > 0:
         # check if learning_phase is used in this model
         trainer.register_callback(KerasPhaseCallback(True))
 
 
 class KerasModel(object):
-    def __init__(self, get_model, inputs_desc, targets_desc,
-                 input, trainer=None):
+    def __init__(self, get_model, input_signature=None, target_signature=None,
+                 input=None, trainer=None):
         """
         Args:
             get_model (input1, input2, ... -> keras.Model):
                 A function which takes tensors, builds and returns a Keras model.
                 It will be part of the tower function.
-            inputs_desc ([InputDesc]):
-            targets_desc ([InputDesc]):
-            input (InputSource | DataFlow):
-            trainer (Trainer): the default will check the number of available
-                GPUs and use them all.
+            input_signature ([tf.TensorSpec]): required. The signature for inputs.
+            target_signature ([tf.TensorSpec]): required. The signature for the targets tensors.
+            input (InputSource | DataFlow): the InputSource or DataFlow where the input data comes from.
+            trainer (Trainer): the default will check the number of available GPUs and use them all.
         """
         self.get_model = get_model
         assert callable(get_model), get_model
-        self.inputs_desc = inputs_desc
-        self.targets_desc = targets_desc
+        self.input_signature = input_signature
+        self.target_signature = target_signature
         if trainer is None:
             nr_gpu = get_nr_gpu()
             if nr_gpu <= 1:
@@ -250,6 +249,7 @@ class KerasModel(object):
         assert isinstance(trainer, Trainer), trainer
         assert not isinstance(trainer, DistributedTrainerBase)
 
+        assert input is not None, "Argument 'input' is required!"
         self.input = apply_default_prefetch(input, trainer)
         self.trainer = trainer
 
@@ -269,7 +269,8 @@ class KerasModel(object):
         self._stats_to_inference = loss + metrics + [TOTAL_LOSS_NAME]
         setup_keras_trainer(
             self.trainer, get_model=self.get_model,
-            inputs_desc=self.inputs_desc, targets_desc=self.targets_desc,
+            input_signature=self.input_signature,
+            target_signature=self.target_signature,
             input=self.input,
             optimizer=optimizer,
             loss=loss,
@@ -281,7 +282,7 @@ class KerasModel(object):
             validation_data (DataFlow or InputSource): to be used for inference.
                 The inference callback is added as the first in the callback list.
                 If you need to use it in a different order, please write it in the callback list manually.
-            kwargs: same as `self.trainer.train_with_defaults`.
+            kwargs: same arguments as :meth:`Trainer.train_with_defaults`.
         """
         callbacks = kwargs.pop('callbacks', [])
         if validation_data is not None:

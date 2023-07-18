@@ -1,9 +1,0 @@
-set:
-  maskrcnn:
-    gpus: 64
-    batch_size_per_gpu: 4
-    gradient_clip: 1.5
-
-append:
-  global:
-    name: -64x4

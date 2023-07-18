@@ -1,21 +1,14 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: argtools.py
 
 
 import inspect
-import six
+import functools
 
 from . import logger
 
-if six.PY2:
-    import functools32 as functools
-else:
-    import functools
-
 __all__ = ['map_arg', 'memoized', 'memoized_method', 'graph_memoized', 'shape2d', 'shape4d',
-           'memoized_ignoreargs', 'log_once', 'call_only_once']
+           'memoized_ignoreargs', 'log_once']
 
 
 def map_arg(**maps):
@@ -28,13 +21,10 @@ def map_arg(**maps):
     def deco(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            if six.PY2:
-                argmap = inspect.getcallargs(func, *args, **kwargs)
-            else:
-                # getcallargs was deprecated since 3.5
-                sig = inspect.signature(func)
-                argmap = sig.bind_partial(*args, **kwargs).arguments
-            for k, map_func in six.iteritems(maps):
+            # getcallargs was deprecated since 3.5
+            sig = inspect.signature(func)
+            argmap = sig.bind_partial(*args, **kwargs).arguments
+            for k, map_func in maps.items():
                 if k in argmap:
                     argmap[k] = map_func(argmap[k])
             return func(**argmap)
@@ -54,7 +44,7 @@ def graph_memoized(func):
     """
 
     # TODO it keeps the graph alive
-    import tensorflow as tf
+    from ..compat import tfv1
     GRAPH_ARG_NAME = '__IMPOSSIBLE_NAME_FOR_YOU__'
 
     @memoized
@@ -65,7 +55,7 @@ def graph_memoized(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         assert GRAPH_ARG_NAME not in kwargs, "No Way!!"
-        graph = tf.get_default_graph()
+        graph = tfv1.get_default_graph()
         kwargs[GRAPH_ARG_NAME] = graph
         return func_with_graph_arg(*args, **kwargs)
     return wrapper
@@ -106,8 +96,8 @@ def shape2d(a):
     raise RuntimeError("Illegal shape: {}".format(a))
 
 
-def get_data_format(data_format, tfmode=True):
-    if tfmode:
+def get_data_format(data_format, keras_mode=True):
+    if keras_mode:
         dic = {'NCHW': 'channels_first', 'NHWC': 'channels_last'}
     else:
         dic = {'channels_first': 'NCHW', 'channels_last': 'NHWC'}
@@ -117,7 +107,7 @@ def get_data_format(data_format, tfmode=True):
     return ret
 
 
-def shape4d(a, data_format='channels_last'):
+def shape4d(a, data_format='NHWC'):
     """
     Ensuer a 4D shape, to use with 4D symbolic functions.
 
@@ -129,7 +119,7 @@ def shape4d(a, data_format='channels_last'):
             or ``[1, 1, a, a]`` depending on data_format.
     """
     s2d = shape2d(a)
-    if get_data_format(data_format) == 'channels_last':
+    if get_data_format(data_format, False) == 'NHWC':
         return [1] + s2d + [1]
     else:
         return [1, 1] + s2d

@@ -33,7 +33,7 @@ def draw_annotation(img, boxes, klass, is_crowd=None):
     return img
 
 
-def draw_proposal_recall(img, proposals, proposal_scores, gt_boxes, top=3):
+def draw_proposal_recall(img, proposals, gt_boxes, top=3):
     """
     Draw top3 proposals for each gt.
     Args:
@@ -47,8 +47,7 @@ def draw_proposal_recall(img, proposals, proposal_scores, gt_boxes, top=3):
     good_proposals_ind = np.unique(good_proposals_ind.ravel())
 
     proposals = proposals[good_proposals_ind, :]
-    tags = list(map(str, proposal_scores[good_proposals_ind]))
-    img = viz.draw_boxes(img, proposals, tags)
+    img = viz.draw_boxes(img, proposals)
     return img, good_proposals_ind
 
 

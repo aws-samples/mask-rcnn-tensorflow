@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: distributed.py
 
@@ -27,7 +25,7 @@ def get_distributed_session_creator(server):
         local_init_op=local_init_op,
         ready_op=ready_op,
         ready_for_local_init_op=ready_for_local_init_op,
-        graph=tf.get_default_graph())
+        graph=tf.compat.v1.get_default_graph())
 
     # to debug wrong variable collection
     # from pprint import pprint
@@ -41,9 +39,9 @@ def get_distributed_session_creator(server):
             if is_chief:
                 return sm.prepare_session(master=server.target, init_op=init_op)
             else:
-                tf.logging.set_verbosity(tf.logging.INFO)   # print message about uninitialized vars
+                tf.math.logging.set_verbosity(tf.math.logging.INFO)   # print message about uninitialized vars
                 ret = sm.wait_for_session(master=server.target)
-                tf.logging.set_verbosity(tf.logging.WARN)
+                tf.math.logging.set_verbosity(tf.math.logging.WARN)
                 return ret
 
     return _Creator()
