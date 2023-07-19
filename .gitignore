@@ -11,9 +11,7 @@ logs
 *.png
 *.jpg
 checkpoint
-*.json
 *.prototxt
-*.txt
 *.tgz
 *.gz
 
