@@ -10,6 +10,10 @@ This implementation **does not** make use of any custom TensorFlow Ops.
 
 This implementation supports [Horovod](https://github.com/horovod/horovod) for multi-node, multi-GPU distributed training. 
 
+#### NOTE
+
+The *deprecated* Mask R-CNN implementation based on TensorFlow 1.15 with custom TensorFlow Ops is available on the branch [tf-1.15-with-custom-ops](https://github.com/aws-samples/mask-rcnn-tensorflow/tree/tf1.15-with-custom-ops).
+
 ### Training convergence
 
 Training on N GPUs with a per-gpu batch size of M = NxM total batch size.
