@@ -1,7 +1,0 @@
-append:
-  global:
-    name: -determinism
-
-set:
-  maskrcnn:
-    image: armandmcqueen/mask-rcnn-tensorflow:dev-determinism_armand

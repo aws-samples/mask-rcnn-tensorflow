@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: training.py
 
@@ -10,19 +8,19 @@ from abc import ABCMeta, abstractmethod
 from contextlib import contextmanager
 import six
 import tensorflow as tf
-from six.moves import range, zip
 
-from ..tfutils.common import get_tf_version_tuple
+from ..compat import tfv1
 from ..tfutils.gradproc import ScaleGradient
 from ..tfutils.tower import TrainTowerContext
 from ..utils import logger
+from ..utils.develop import HIDE_DOC
 from .utils import (
-    GradientPacker, LeastLoadedDeviceSetter, aggregate_grads, allreduce_grads, allreduce_grads_hierarchical,
+    GradientPacker, LeastLoadedDeviceSetter,
+    aggregate_grads_colocate, allreduce_grads_naive,
+    allreduce_grads, allreduce_grads_hierarchical,
     merge_grad_list, override_to_local_variable, split_grad_list)
 
-__all__ = ['GraphBuilder',
-           'SyncMultiGPUParameterServerBuilder', 'DataParallelBuilder',
-           'SyncMultiGPUReplicatedBuilder', 'AsyncMultiGPUBuilder']
+__all__ = ["DataParallelBuilder"]
 
 
 @six.add_metaclass(ABCMeta)
@@ -35,7 +33,7 @@ class GraphBuilder(object):
 @contextmanager
 def _maybe_reuse_vs(reuse):
     if reuse:
-        with tf.variable_scope(tf.get_variable_scope(), reuse=True):
+        with tfv1.variable_scope(tfv1.get_variable_scope(), reuse=True):
             yield
     else:
         yield
@@ -66,7 +64,7 @@ class DataParallelBuilder(GraphBuilder):
             return re.sub('tower[0-9]+/', '', x.op.name)
 
         if len(set(nvars)) != 1:
-            names_per_gpu = [set([basename(k[1]) for k in grad_and_vars]) for grad_and_vars in grad_list]
+            names_per_gpu = [{basename(k[1]) for k in grad_and_vars} for grad_and_vars in grad_list]
             inters = copy.copy(names_per_gpu[0])
             for s in names_per_gpu:
                 inters &= s
@@ -103,7 +101,7 @@ class DataParallelBuilder(GraphBuilder):
             device = devices[idx] if devices is not None else '/gpu:{}'.format(t)
             usevs = use_vs[idx] if use_vs is not None else False
             reuse = not usevs and idx > 0
-            with tf.device(device), _maybe_reuse_vs(reuse), TrainTowerContext(
+            with tfv1.device(device), _maybe_reuse_vs(reuse), TrainTowerContext(
                     tower_names[idx],
                     vs_name=tower_names[idx] if usevs else '',
                     index=idx, total=len(towers)):
@@ -119,6 +117,7 @@ class DataParallelBuilder(GraphBuilder):
         return ret
 
     @staticmethod
+    @HIDE_DOC
     def build_on_towers(*args, **kwargs):
         return DataParallelBuilder.call_for_each_tower(*args, **kwargs)
 
@@ -174,12 +173,13 @@ class SyncMultiGPUParameterServerBuilder(DataParallelBuilder):
         assert len(grad_list) == len(self.towers)
         DataParallelBuilder._check_grad_list(grad_list)
 
-        # debug tower performance (without update):
+        # debug tower performance:
         # ops = [k[0] for k in grad_list[1]] + [k[0] for k in grad_list[0]]
         # self.train_op = tf.group(*ops)
         # return
 
-        self.grads = aggregate_grads(grad_list, colocation=True)
+        self.grads = aggregate_grads_colocate(grad_list)
+        # debug tower performance:
         # grads = grad_list[0]
 
         opt = get_opt_fn()
@@ -205,12 +205,11 @@ class SyncMultiGPUReplicatedBuilder(DataParallelBuilder):
     def __init__(self, towers, average, mode):
         super(SyncMultiGPUReplicatedBuilder, self).__init__(towers)
         self._average = average
-        assert mode in ['nccl', 'cpu', 'hierarchical'], mode
+        assert mode in ['nccl', 'cpu', 'hierarchical', 'gpu', 'collective'], mode
         self._mode = mode
 
         if self._mode == 'hierarchical' and len(towers) != 8:
-            logger.warn("mode='hierarchical' require >= 8 GPUs. Fallback to mode='nccl'.")
-            self._mode = 'nccl'
+            raise ValueError("mode='hierarchical' require 8 GPUs.")
 
     def call_for_each_tower(self, tower_fn):
         """
@@ -249,46 +248,44 @@ class SyncMultiGPUReplicatedBuilder(DataParallelBuilder):
 
         DataParallelBuilder._check_grad_list(grad_list)
 
-        dtypes = set([x[0].dtype.base_dtype for x in grad_list[0]])
+        dtypes = {x[0].dtype.base_dtype for x in grad_list[0]}
         dtypes_nccl_supported = [tf.float32, tf.float64]
-        if get_tf_version_tuple() >= (1, 8):
-            dtypes_nccl_supported.append(tf.float16)
-        valid_for_nccl = all([k in dtypes_nccl_supported for k in dtypes])
+        dtypes_nccl_supported.append(tf.float16)
+        valid_for_nccl = all(k in dtypes_nccl_supported for k in dtypes)
         if self._mode == 'nccl' and not valid_for_nccl:
-            logger.warn("Cannot use mode='nccl' because some gradients have unsupported types. Fallback to mode='cpu'")
-            self._mode = 'cpu'
+            logger.warn("Cannot use mode='nccl' because some gradients have unsupported types. Fallback to mode='gpu'")
+            self._mode = 'gpu'
 
-        if self._mode in ['nccl', 'hierarchical']:
-            all_grads, all_vars = split_grad_list(grad_list)
+        all_grads, all_vars = split_grad_list(grad_list)
+
+        def do_allreduce(all_grads):
             # use allreduce from tf-benchmarks
             # from .batch_allreduce import AllReduceSpecAlgorithm
             # algo = AllReduceSpecAlgorithm('nccl', list(range(8)), 0, 10)
             # all_grads, warmup_ops = algo.batch_all_reduce(all_grads, 1, True, False)
             # print("WARMUP OPS", warmup_ops)
-
-            if self._mode == 'nccl':
-                all_grads = allreduce_grads(all_grads, average=self._average)  # #gpu x #param
+            if self._mode in ['nccl', 'collective']:
+                # #gpu x #param
+                all_grads = allreduce_grads(all_grads, average=self._average, mode=self._mode)
+            elif self._mode == 'hierarchical':
+                all_grads = allreduce_grads_hierarchical(all_grads, raw_devices, average=self._average)
             else:
-                packer = GradientPacker(len(raw_devices))
-                succ = packer.compute_strategy(all_grads[0])
-                if succ:
-                    packed_grads = packer.pack_all(all_grads, raw_devices)
-                    packed_grads_aggr = allreduce_grads_hierarchical(
-                        packed_grads, raw_devices, average=self._average)
-                    all_grads = packer.unpack_all(packed_grads_aggr, raw_devices)
-                else:
-                    all_grads = allreduce_grads_hierarchical(all_grads, raw_devices, average=self._average)
+                devices = ['/cpu:0'] if self._mode == 'cpu' else raw_devices
+                all_grads = allreduce_grads_naive(all_grads, devices=devices, average=self._average)
+                all_grads = [all_grads] * len(self.towers)
+            return all_grads
 
-            self.grads = merge_grad_list(all_grads, all_vars)
-        elif self._mode == 'cpu':
-            agg_grad_and_vars = aggregate_grads(
-                grad_list, colocation=False,
-                devices=['/cpu:0'], average=self._average)    # #param x 2
-            self.grads = []  # #gpu x #param x 2
-            for grad_and_vars in grad_list:   # grad_and_vars: #paramx2
-                # take v from each tower, and g from average.
-                self.grads.append(
-                    [(g, v) for (_, v), (g, _) in zip(grad_and_vars, agg_grad_and_vars)])
+        use_packer = self._mode in ['hierarchical']
+        if use_packer:
+            packer = GradientPacker(len(raw_devices))
+            use_packer = packer.compute_strategy(all_grads[0])  # may fail to pack
+        if use_packer:
+            all_grads = packer.pack_all(all_grads, raw_devices)
+        all_grads = do_allreduce(all_grads)   # all the work happens here
+        if use_packer:
+            all_grads = packer.unpack_all(all_grads, raw_devices)
+
+        self.grads = merge_grad_list(all_grads, all_vars)
 
         train_ops = []
         opt = get_opt_fn()
@@ -301,8 +298,11 @@ class SyncMultiGPUReplicatedBuilder(DataParallelBuilder):
                             grad_and_vars, name='apply_grad_{}'.format(idx)))
         train_op = tf.group(*train_ops, name='train_op')
 
-        with tf.name_scope('sync_variables'):
-            post_init_op = SyncMultiGPUReplicatedBuilder.get_post_init_ops()
+        if len(self.towers) > 1:
+            with tf.name_scope('sync_variables'):
+                post_init_op = SyncMultiGPUReplicatedBuilder.get_post_init_ops()
+        else:
+            post_init_op = None
         return train_op, post_init_op
 
 # Adopt from https://github.com/tensorflow/benchmarks/blob/master/scripts/tf_cnn_benchmarks/variable_mgr.py
@@ -312,9 +312,9 @@ class SyncMultiGPUReplicatedBuilder(DataParallelBuilder):
         Copy values of variables on GPU 0 to other GPUs.
         """
         # literally all variables, because it's better to sync optimizer-internal variables as well
-        all_vars = tf.global_variables() + tf.local_variables()
-        var_by_name = dict([(v.name, v) for v in all_vars])
-        trainable_names = set([x.name for x in tf.trainable_variables()])
+        all_vars = tfv1.global_variables() + tfv1.local_variables()
+        var_by_name = {v.name: v for v in all_vars}
+        trainable_names = {x.name for x in tfv1.trainable_variables()}
         post_init_ops = []
 
         def log_failure(name, reason):

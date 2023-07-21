@@ -1,12 +1,10 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: base.py
 
 
 from abc import ABCMeta
 import six
-import tensorflow as tf
+from ..compat import tfv1 as tf
 
 from ..tfutils.common import get_op_or_tensor_by_name
 
@@ -46,10 +44,16 @@ class Callback(object):
 
     _chief_only = True
 
+    name_scope = ""
+    """
+    A name scope for ops created inside this callback.
+    By default to the name of the class, but can be set per-instance.
+    """
+
     def setup_graph(self, trainer):
         self.trainer = trainer
-        self.graph = tf.get_default_graph()
-        scope_name = type(self).__name__
+        self.graph = tf.compat.v1.get_default_graph()
+        scope_name = self.name_scope or type(self).__name__
         scope_name = scope_name.replace('_', '')
         with tf.name_scope(scope_name):
             self._setup_graph()
@@ -321,3 +325,15 @@ class CallbackFactory(Callback):
     def _after_train(self):
         if self._cb_after_train:
             self._cb_after_train(self)
+
+    def __str__(self):
+        strs = []
+        if self._cb_setup_graph is not None:
+            strs.append("setup_graph=" + str(self._cb_setup_graph))
+        if self._cb_before_train is not None:
+            strs.append("before_train=" + str(self._cb_before_train))
+        if self._cb_trigger is not None:
+            strs.append("trigger=" + str(self._cb_trigger))
+        if self._cb_after_train is not None:
+            strs.append("after_train=" + str(self._cb_after_train))
+        return "CallbackFactory({})".format(', '.join(strs))

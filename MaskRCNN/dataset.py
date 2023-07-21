@@ -67,9 +67,9 @@ class COCODetection(object):
             for k in range(6):
                 ret[f'mAP({iou_type})/' + fields[k]] = 0.0
             return ret
-        self.coco.createIndex(use_ext=True)
-        cocoDt = self.coco.loadRes(json_file, use_ext=True)
-        cocoEval = COCOeval(self.coco, cocoDt, iou_type, use_ext=True)
+        self.coco.createIndex()
+        cocoDt = self.coco.loadRes(json_file)
+        cocoEval = COCOeval(self.coco, cocoDt, iou_type)
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()

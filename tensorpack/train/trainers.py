@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: trainers.py
 
@@ -7,6 +5,7 @@ import multiprocessing as mp
 import os
 import sys
 import tensorflow as tf
+from tensorpack.compat import tfv1
 
 from ..callbacks import CallbackFactory, RunOp
 from ..graph_builder.distributed import DistributedParameterServerBuilder, DistributedReplicatedBuilder
@@ -20,7 +19,7 @@ from ..tfutils.sesscreate import NewSessionCreator
 from ..tfutils.tower import TrainTowerContext
 from ..utils import logger
 from ..utils.argtools import map_arg
-from ..utils.develop import HIDE_DOC, log_deprecated
+from ..utils.develop import HIDE_DOC, deprecated
 from .tower import SingleCostTrainer
 
 __all__ = ['NoOpTrainer', 'SimpleTrainer',
@@ -31,7 +30,7 @@ __all__ = ['NoOpTrainer', 'SimpleTrainer',
            'AsyncMultiGPUTrainer',
            'DistributedTrainerParameterServer',
            'DistributedTrainerReplicated',
-           'HorovodTrainer']
+           'HorovodTrainer', 'BytePSTrainer']
 
 
 def _int_to_range(x):
@@ -63,11 +62,12 @@ class NoOpTrainer(SimpleTrainer):
     Note that `steps_per_epoch` and `max_epochs` are still valid options.
     """
     def run_step(self):
-        pass
+        self.hooked_sess.run([])
 
 
 # Only exists for type check & back-compatibility
 class QueueInputTrainer(SimpleTrainer):
+    @deprecated("SimpleTrainer is sufficient!", "2019-12-31")
     def _setup_graph(self, input, get_cost_fn, get_opt_fn):
         assert isinstance(input, QueueInput), input
         return super(QueueInputTrainer, self)._setup_graph(input, get_cost_fn, get_opt_fn)
@@ -75,11 +75,11 @@ class QueueInputTrainer(SimpleTrainer):
 
 class SyncMultiGPUTrainerParameterServer(SingleCostTrainer):
 
-    __doc__ = SyncMultiGPUParameterServerBuilder.__doc__
+    __doc__ = SyncMultiGPUParameterServerBuilder.__doc__ + """
 
-    devices = None
-    """
-    List of GPU ids.
+    Attributes:
+        devices (list[int]): List of GPU ids.
+
     """
 
     @map_arg(gpus=_int_to_range)
@@ -118,11 +118,11 @@ def SyncMultiGPUTrainer(gpus):
 
 class AsyncMultiGPUTrainer(SingleCostTrainer):
 
-    __doc__ = AsyncMultiGPUBuilder.__doc__
+    __doc__ = AsyncMultiGPUBuilder.__doc__ + """
 
-    devices = None
-    """
-    List of GPU ids.
+    Attributes:
+        devices (list[int]): List of GPU ids.
+
     """
 
     @map_arg(gpus=_int_to_range)
@@ -139,7 +139,7 @@ class AsyncMultiGPUTrainer(SingleCostTrainer):
     def _setup_graph(self, input, get_cost_fn, get_opt_fn):
         if len(self.devices) > 1:
             assert isinstance(input, FeedfreeInput), input
-        tower_fn = self._make_get_grad_fn(input, get_cost_fn, get_opt_fn),
+        tower_fn = self._make_get_grad_fn(input, get_cost_fn, get_opt_fn)
         grad_list = self._builder.call_for_each_tower(tower_fn)
         self.train_op = self._builder.build(grad_list, get_opt_fn)
         return []
@@ -147,45 +147,53 @@ class AsyncMultiGPUTrainer(SingleCostTrainer):
 
 class SyncMultiGPUTrainerReplicated(SingleCostTrainer):
 
-    __doc__ = SyncMultiGPUReplicatedBuilder.__doc__
+    __doc__ = SyncMultiGPUReplicatedBuilder.__doc__ + """
 
-    devices = None
-    """
-    List of GPU ids.
-    """
+    Attributes:
+        devices (list[int]): List of GPU ids.
 
-    BROADCAST_EVERY_EPOCH = True
-    """
-    Whether to broadcast the variables every epoch.
-    Theoretically this is a no-op (because the variables
-    are supposed to be in-sync).
-    But this cheap operation may help prevent
-    certain numerical issues in practice.
+        BROADCAST_EVERY_EPOCH (bool):
+            Whether to broadcast the variables every epoch.
+            Theoretically this is a no-op (because the variables
+            are supposed to be in-sync).
+            But this cheap operation may help prevent
+            certain numerical issues in practice.
+
+            Note that in cases such as BatchNorm, the variables may not be in sync:
+            e.g., non-master worker may not maintain EMAs.
+
+            For benchmark, disable this option.
     """
 
     @map_arg(gpus=_int_to_range)
-    def __init__(self, gpus, average=True, mode=None, use_nccl=None):
+    def __init__(self, gpus, average=True, mode=None):
         """
         Args:
             gpus (int or [int]): list of GPU ids.
             average (bool): whether to average or sum gradients.
             mode (str or None): Gradient aggregation mode.
-                Supported values: ['nccl', 'hierarchical', 'cpu'].
+                Supported values: ['nccl', 'hierarchical', 'cpu', 'gpu'].
+                These modes may differ in speed.
                 Default to pick automatically by heuristics.
-                These modes may have slight (within 5%) differences in speed.
-                "hierarchical" mode was designed for DGX-like 8GPU machines.
-            use_nccl: deprecated option
+                "hierarchical" mode was designed for DGX-like 8-GPU machines.
         """
         self.devices = gpus
+        if mode is not None:
+            mode = mode.lower()
 
-        if use_nccl is not None:
-            mode = 'nccl' if use_nccl else None
-            log_deprecated("use_nccl option", "Use the `mode` option instead!", "2019-01-31")
+        # Heuristics about mode selection:
+        if mode == 'hierarchical' and len(gpus) != 8:
+            logger.warn("mode='hierarchical' requires 8 GPUs. Will fallback to default mode.")
+            mode = None
         if mode is None:
-            mode = 'hierarchical' if len(gpus) == 8 else 'nccl'
-        mode = mode.lower()
-
+            if len(gpus) == 8:
+                mode = 'hierarchical'
+            else:
+                mode = 'gpu'
+        
         self._builder = SyncMultiGPUReplicatedBuilder(gpus, average, mode)
+        self.BROADCAST_EVERY_EPOCH = True
+
         super(SyncMultiGPUTrainerReplicated, self).__init__()
 
     def _setup_graph(self, input, get_cost_fn, get_opt_fn):
@@ -195,14 +203,19 @@ class SyncMultiGPUTrainerReplicated(SingleCostTrainer):
         grad_list = self._builder.call_for_each_tower(tower_fn)
         self.train_op, post_init_op = self._builder.build(grad_list, get_opt_fn)
 
-        cb = RunOp(
-            post_init_op,
-            run_before=True,
-            run_as_trigger=self.BROADCAST_EVERY_EPOCH,
-            verbose=True)
-        return [cb]
+        if post_init_op is not None:
+            cb = RunOp(
+                post_init_op,
+                run_before=True,
+                run_as_trigger=self.BROADCAST_EVERY_EPOCH,
+                verbose=True)
+            cb.name_scope = "SyncVariables"
+            return [cb]
+        else:
+            return []
 
 
+# deprecated
 class DistributedTrainerBase(SingleCostTrainer):
 
     devices = None
@@ -231,6 +244,7 @@ class DistributedTrainerBase(SingleCostTrainer):
             get_distributed_session_creator(self.server), session_init)
 
 
+# This is slow. deprecated in favor of horovod
 class DistributedTrainerParameterServer(DistributedTrainerBase):
 
     __doc__ = DistributedParameterServerBuilder.__doc__
@@ -258,6 +272,7 @@ class DistributedTrainerParameterServer(DistributedTrainerBase):
         return []
 
 
+# This is slow. deprecated in favor of horovod
 class DistributedTrainerReplicated(DistributedTrainerBase):
 
     __doc__ = DistributedReplicatedBuilder.__doc__
@@ -277,15 +292,15 @@ class DistributedTrainerReplicated(DistributedTrainerBase):
         self._builder = DistributedReplicatedBuilder(gpus, server)
         self.is_chief = self._builder.is_chief
 
-    def _setup_input(self, inputs_desc, input):
+    def _setup_input(self, input_signature, input):
         with override_to_local_variable():
             get_global_step_var()  # gs should be local
-            # input source may create variable (queue size summary)
+            # input source may create variables (queue size summary)
             # TODO This is not good because we don't know from here
             # whether something should be global or local. We now assume
             # they should be local.
             assert not input.setup_done()
-            return input.setup(inputs_desc)
+            return input.setup(input_signature)
 
     def _setup_graph(self, input, get_cost_fn, get_opt_fn):
         assert isinstance(input, FeedfreeInput), input
@@ -322,33 +337,34 @@ class HorovodTrainer(SingleCostTrainer):
     .. code-block:: bash
 
         # First, change trainer to HorovodTrainer(), then
-        CUDA_VISIBLE_DEVICES=0,1,2,3 NCCL_DEBUG=INFO mpirun -np 4 --output-filename mylog python train.py
+        CUDA_VISIBLE_DEVICES=0,1,2,3 NCCL_DEBUG=INFO horovodrun -np 4 --output-filename mylog python train.py
 
     To use for distributed training:
 
     .. code-block:: bash
 
         # First, change trainer to HorovodTrainer(), then
-        mpirun -np 8 -H server1:4,server2:4  \\
-            -bind-to none -map-by slot \\
-            --output-filename mylog -x NCCL_DEBUG=INFO -x LD_LIBRARY_PATH \\
+        horovodrun -np 8 -H server1:4,server2:4 --output-filename mylog \\
             python train.py
-        # Add other environment variables you need by -x, e.g. PYTHONPATH, PATH.
-        # If using all GPUs, you can always skip the `CUDA_VISIBLE_DEVICES` option.
-        # There are other MPI options that can potentially improve performance especially on special hardwares.
 
     Note:
         1. To reach the maximum speed in your system, there are many options to tune
-           for Horovod installation and in the MPI command line.
+           in Horovod installation, horovodrun arguments, and in the MPI command line.
            See Horovod docs for details.
 
-        2. Due to a TF bug, you must not initialize CUDA context before the trainer starts training.
+        2. Due to a TF bug (#8136), you must not initialize CUDA context before the trainer starts training.
            Therefore TF functions like `is_gpu_available()` or `list_local_devices()`
            must be avoided.
+           You can, however, use `tf.config.experimental.list_physical_devices('GPU')`, introduced in TF 1.14.
 
-        2. MPI does not like `fork()`. If your dataflow contains multiprocessing, it may cause problems.
+        3. Horovod supports both MPI and gloo. There are a few drawbacks of the MPI backend:
 
-        3. MPI sometimes fails to kill all processes in the end. Be sure to check it afterwards.
+            + MPI does not like `fork()`. If your code (e.g. dataflow) contains multiprocessing, it may cause problems.
+            + MPI sometimes fails to kill all processes in the end. Be sure to check it afterwards.
+
+           The gloo backend is recommended though it may come with very minor slow down.
+           To use gloo backend, see
+           `horovod documentation <https://github.com/horovod/horovod#running-horovod>`_ for more details.
 
         4. Keep in mind that there is one process running the script per GPU, therefore:
 
@@ -362,7 +378,8 @@ class HorovodTrainer(SingleCostTrainer):
 
            + Callbacks have an option to be run only in the chief process, or in all processes.
              See :meth:`Callback.set_chief_only()`. Most callbacks have a reasonable
-             default already, but certain callbacks may not behave properly by default. Report an issue if you find any.
+             default already, but certain callbacks may need your customization.
+             Report an issue if you find any bad defaults.
 
            + You can use Horovod API such as `hvd.rank()` to know which process you are and choose
              different code path. Chief process has rank 0.
@@ -371,16 +388,19 @@ class HorovodTrainer(SingleCostTrainer):
            `ResNet-Horovod <https://github.com/tensorpack/benchmarks/tree/master/ResNet-Horovod>`_
            for a full example which has handled these common issues.
            This example can train ImageNet in roughly an hour following the paper's setup.
+
     Attributes:
         BROADCAST_EVERY_EPOCH (bool):
             Whether to broadcast the variables every epoch.
             Theoretically this is a no-op (because the variables
             are supposed to be in-sync).
-            But this cheap operation may help prevent
-            certain numerical issues in practice.
-    """
+            But this cheap operation may help prevent certain numerical issues in practice.
 
-    BROADCAST_EVERY_EPOCH = False
+            Note that in cases such as BatchNorm, the variables may not be in sync:
+            e.g., non-master worker may not maintain EMAs.
+
+            For benchmark, disable this option.
+    """
 
     def __init__(self, average=True, compression=None):
         """
@@ -389,13 +409,13 @@ class HorovodTrainer(SingleCostTrainer):
             compression: `hvd.Compression.fp16` or `hvd.Compression.none`
         """
         if 'pyarrow' in sys.modules:
-            logger.warn("Horovod and pyarrow may conflict due to pyarrow bugs. "
-                        "Uninstall pyarrow and use msgpack instead.")
+            logger.warn("Horovod and pyarrow may conflict due to pyarrow bugs.")
         # lazy import
         import horovod.tensorflow as hvd
         import horovod
         hvd_version = tuple(map(int, horovod.__version__.split('.')[:3]))
         self.hvd = hvd
+
         hvd.init()
         self.is_chief = hvd.rank() == 0
         self._local_rank = hvd.local_rank()
@@ -405,6 +425,8 @@ class HorovodTrainer(SingleCostTrainer):
         self._has_compression = hvd_version >= (0, 15, 0)
         logger.info("[HorovodTrainer] local rank={}".format(self._local_rank))
         super(HorovodTrainer, self).__init__()
+
+        self.BROADCAST_EVERY_EPOCH = True
 
     def mpi_enabled(self):
         """
@@ -448,7 +470,7 @@ class HorovodTrainer(SingleCostTrainer):
         return [cb]
 
     def broadcast(self, _):
-        logger.info("Running broadcast ...")
+        logger.info("Broadcasting {} global variables ...".format(self._num_global_variables))
         # the op will be created in initialize()
         self.sess.run(self._broadcast_op)
 
@@ -457,13 +479,13 @@ class HorovodTrainer(SingleCostTrainer):
         # broadcast_op should be the last setup_graph: it needs to be created
         # "right before" the graph is finalized,
         # because it needs to capture all the variables (which may be created by callbacks).
-        with tf.name_scope('horovod_broadcast'):
-            self._broadcast_op = self.hvd.broadcast_global_variables(0)
+        self._num_global_variables = len(tfv1 .global_variables())
+        self._broadcast_op = self.hvd.broadcast_global_variables(0)
 
         # it's important that our NewSessionCreator does not finalize the graph
         if not isinstance(session_creator, NewSessionCreator):
             raise ValueError(
-                "session_creator has to be `NewSessionCreator` for horovod training! ")
+                "session_creator has to be `NewSessionCreator` for horovod/byteps training! ")
         # NOTE It will fail if GPU was already detected before initializing the session
         # https://github.com/tensorflow/tensorflow/issues/8136
         session_creator.config.gpu_options.visible_device_list = str(self._local_rank)
@@ -479,7 +501,55 @@ class HorovodTrainer(SingleCostTrainer):
         # 1. a allgather helper to concat strings
         # 2. check variables on each rank match each other, print warnings, and broadcast the common set.
         if self.is_chief:
-            logger.info("Broadcasting initialized variables ...")
+            logger.info("Broadcasting initialization of {} global variables ...".format(self._num_global_variables))
         else:
-            logger.info("Rank {} waiting for initialization broadcasting ...".format(self._rank))
+            logger.info("Rank {} waiting for initialization of {} variables ...".format(
+                self._rank, self._num_global_variables))
         self.sess.run(self._broadcast_op)
+
+
+class BytePSTrainer(HorovodTrainer):
+    """
+    BytePS trainer. Supports both multi-GPU and distributed training.
+    It achieves better scalability than horovod in distributed training, if the model is communication
+    intensive and you have properly set up the machines following its
+    `best practices <https://github.com/bytedance/byteps/blob/master/docs/best-practice.md>`_
+    which requires a few extra bandwidth servers than horovod.
+
+    To use it, switch the trainer, and refer to BytePS documentation on how to
+    launch server/scheduler/workers.
+
+    Attributes:
+        hvd (module): the byteps module that contains horovod-compatible APIs
+            like `rank(),size()`.
+            This attribute exists so that downstream code that uses these APIs
+            does not need to worry about which library is being used under the hood.
+    """
+    def __init__(self, average=True):
+        """
+        Args:
+            average (bool): whether to average or sum the gradients across processes.
+        """
+        import byteps.tensorflow as bps
+        self.hvd = bps  # BytePS has the same interface as Horovod
+        self.hvd.allreduce = bps.push_pull  # https://github.com/bytedance/byteps/issues/8
+        assert os.environ.get("DMLC_ROLE", None) == "worker"
+        assert "DMLC_WORKER_ID" in os.environ and "DMLC_NUM_WORKER" in os.environ
+        bps.init()
+        self.is_chief = bps.rank() == 0
+
+        self._local_rank = bps.local_rank()
+        self._rank = bps.rank()
+        self._average = average
+
+        self._compression = None
+        self._has_compression = False
+        logger.info("[BytePSTrainer] local rank={}".format(self._local_rank))
+        SingleCostTrainer.__init__(self)
+
+    def mpi_enabled(self):
+        """
+        Returns:
+            bool: whether hvd is currently running under MPI
+        """
+        return False

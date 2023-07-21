@@ -1,0 +1,41 @@
+{
+    "configurations": [
+        {
+            "name": "Docker: Python - General",
+            "type": "docker",
+            "request": "launch",
+            "preLaunchTask": "docker-run: debug",
+            "python": {
+                "pathMappings": [
+                    {
+                        "localRoot": "${workspaceFolder}",
+                        "remoteRoot": "/app"
+                    }
+                ],
+                "env": {"TF_DEVICE_MIN_SYS_MEMORY_IN_MB": "1024"},
+                "projectType": "general",
+                "args": [
+                    "--logdir",
+                    "/logs/maskrcnn-optimized/mask-rcnn-tensorflow",
+                    "--images_per_epoch",
+                    "120000",
+                    "--config", 
+                    "MODE_MASK=True", 
+                    "MODE_FPN=True", 
+                    "DATA.BASEDIR=/data",
+                    "TRAIN.EVAL_PERIOD=1",
+                    "TRAIN.BATCH_SIZE_PER_GPU=2",
+                    "BACKBONE.WEIGHTS=/data/pretrained-models/ImageNet-R50-AlignPadding.npz",
+                    "BACKBONE.NORM=FreezeBN",
+                    "TRAIN.GRADIENT_CLIP=0.36"
+                ]
+            }
+        },
+        {
+            "name": "Docker: Notebooks",
+            "type": "docker",
+            "request": "launch",
+            "preLaunchTask": "docker-run: notebooks"
+        }
+    ]
+}

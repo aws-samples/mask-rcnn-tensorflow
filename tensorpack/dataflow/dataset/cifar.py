@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: cifar.py
 
@@ -9,8 +7,6 @@ import numpy as np
 import os
 import pickle
 import tarfile
-import six
-from six.moves import range
 
 from ...utils import logger
 from ...utils.fs import download, get_dataset_path
@@ -46,10 +42,7 @@ def read_cifar(filenames, cifar_classnum):
     ret = []
     for fname in filenames:
         fo = open(fname, 'rb')
-        if six.PY3:
-            dic = pickle.load(fo, encoding='bytes')
-        else:
-            dic = pickle.load(fo)
+        dic = pickle.load(fo, encoding='bytes')
         data = dic[b'data']
         if cifar_classnum == 10:
             label = dic[b'labels']
@@ -134,13 +127,23 @@ class CifarBase(RNGDataFlow):
             # since cifar is quite small, just do it for safety
             yield self.data[k]
 
-    def get_per_pixel_mean(self):
+    def get_per_pixel_mean(self, names=('train', 'test')):
         """
+        Args:
+            names (tuple[str]): the names ('train' or 'test') of the datasets
+
         Returns:
-            a mean image of all (train and test) images of size 32x32x3
+            a mean image of all images in the given datasets, with size 32x32x3
         """
+        for name in names:
+            assert name in ['train', 'test'], name
         train_files, test_files, _ = get_filenames(self.dir, self.cifar_classnum)
-        all_imgs = [x[0] for x in read_cifar(train_files + test_files, self.cifar_classnum)]
+        all_files = []
+        if 'train' in names:
+            all_files.extend(train_files)
+        if 'test' in names:
+            all_files.extend(test_files)
+        all_imgs = [x[0] for x in read_cifar(all_files, self.cifar_classnum)]
         arr = np.array(all_imgs, dtype='float32')
         mean = np.mean(arr, axis=0)
         return mean
@@ -152,11 +155,15 @@ class CifarBase(RNGDataFlow):
         """
         return self._label_names
 
-    def get_per_channel_mean(self):
+    def get_per_channel_mean(self, names=('train', 'test')):
         """
-        return three values as mean of each channel
+        Args:
+            names (tuple[str]): the names ('train' or 'test') of the datasets
+
+        Returns:
+            An array of three values as mean of each channel, for all images in the given datasets.
         """
-        mean = self.get_per_pixel_mean()
+        mean = self.get_per_pixel_mean(names)
         return np.mean(mean, axis=(0, 1))
 
 

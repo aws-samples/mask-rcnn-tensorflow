@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: utils.py
 
@@ -7,20 +5,15 @@
 import operator
 from contextlib import contextmanager
 import tensorflow as tf
+import threading
 
-from ..tfutils.common import get_tf_version_tuple
+from ..compat import tfv1
 from ..tfutils.scope_utils import cached_name_scope, under_name_scope
 from ..tfutils.varreplace import custom_getter_scope
 from ..utils import logger
 from ..utils.argtools import call_only_once
 
-__all__ = ['LeastLoadedDeviceSetter',
-           'OverrideCachingDevice',
-           'override_to_local_variable',
-           'allreduce_grads',
-           'average_grads',
-           'aggregate_grads'
-           ]
+__all__ = ["LeastLoadedDeviceSetter", "allreduce_grads"]
 
 
 """
@@ -32,12 +25,25 @@ def _replace_global_by_local(kwargs):
     if 'collections' in kwargs:
         collections = kwargs['collections']
     if not collections:
-        collections = set([tf.GraphKeys.GLOBAL_VARIABLES])
+        collections = {tfv1.GraphKeys.GLOBAL_VARIABLES}
     else:
         collections = set(collections.copy())
-    collections.remove(tf.GraphKeys.GLOBAL_VARIABLES)
-    collections.add(tf.GraphKeys.LOCAL_VARIABLES)
+    collections.remove(tfv1.GraphKeys.GLOBAL_VARIABLES)
+    collections.add(tfv1.GraphKeys.LOCAL_VARIABLES)
     kwargs['collections'] = list(collections)
+
+
+_module_lock = threading.Lock()
+_shared_cnt_counter = 0
+
+
+def _get_shared_cnt():
+    global _shared_cnt_counter
+
+    with _module_lock:
+        val = _shared_cnt_counter
+        _shared_cnt_counter += 1
+    return val
 
 
 @contextmanager
@@ -84,24 +90,25 @@ class LeastLoadedDeviceSetter(object):
         # from tensorflow.python.training.device_util import canonicalize
         # from tensorflow.python.distribute.device_util import canonicalize
         def canonicalize(name):    # tensorflow/tensorflow#11484
-            return tf.DeviceSpec.from_string(name).to_string()
+            return tfv1.DeviceSpec.from_string(name).to_string()
 
         if op.device:
             return op.device
         if op.type not in ['Variable', 'VariableV2']:
             return canonicalize(self.worker_device)
 
-        device_index, _ = min(enumerate(
-            self.ps_sizes), key=operator.itemgetter(1))
+        device_name = self.place_with_balance(op)
+        return canonicalize(device_name)
+
+    def place_with_balance(self, op):
+        device_index, _ = min(enumerate(self.ps_sizes), key=operator.itemgetter(1))
         device_name = self.ps_devices[device_index]
         var_size = op.outputs[0].get_shape().num_elements()
         if var_size is None:
             logger.warn("[LeastLoadedDeviceSetter] Shape of variable {} is not fully defined!".format(op.name))
             var_size = 0
-
         self.ps_sizes[device_index] += var_size
-
-        return canonicalize(device_name)
+        return device_name
 
     def __str__(self):
         return "LeastLoadedDeviceSetter-{}".format(self.worker_device)
@@ -137,28 +144,41 @@ def merge_grad_list(all_grads, all_vars):
 
 
 @under_name_scope('AllReduceGrads')
-def allreduce_grads(all_grads, average):
+def allreduce_grads(all_grads, average, mode="nccl"):
     """
     All-reduce average the gradients among K devices. Results are broadcasted to all devices.
 
     Args:
         all_grads (K x N): List of list of gradients. N is the number of variables.
         average (bool): average gradients or not.
+        mode (str): "nccl", "collective"
 
     Returns:
         K x N: same as input, but each grad is replaced by the average over K devices.
     """
+    assert mode in ["nccl", "collective"], mode
 
-    if get_tf_version_tuple() <= (1, 12):
-        from tensorflow.contrib import nccl
-    else:
-        from tensorflow.python.ops import nccl_ops as nccl
     nr_tower = len(all_grads)
     if nr_tower == 1:
         return all_grads
     new_all_grads = []  # N x K
     for grads in zip(*all_grads):
-        summed = nccl.all_sum(grads)
+        # k grads
+        if mode == "nccl":
+            from tensorflow.python.ops import nccl_ops as nccl
+            summed = nccl.all_sum(grads)
+        else:
+            from tensorflow.python.ops import collective_ops
+            summed = []
+            shared_cnt = _get_shared_cnt()
+            for t in grads:
+                with tf.device(t.device):
+                    t = collective_ops.all_reduce(
+                        t, len(grads),
+                        42,   # group key is any fixed integer for a fixed group of devices
+                        shared_cnt + 100,
+                        'Add', 'Id', communication_hint='nccl')
+                    summed.append(t)
 
         grads_for_devices = []  # K
         for g in summed:
@@ -236,29 +256,18 @@ def allreduce_grads_hierarchical(all_grads, devices, average=False):
     return agg_all_grads
 
 
-@under_name_scope('AggregateGrads')
-def aggregate_grads(all_grads,
-                    colocation=False,
-                    devices=None,
-                    average=True):
+@under_name_scope('AggregateGradsColocate')
+def aggregate_grads_colocate(all_grads, average=True):
     """
-    Average the gradients.
+    Aggregate the gradients. The aggregation is colocated with the variable.
 
     Args:
         all_grads (K x N x 2): A list of K lists. Each of the list is a list of N (grad, var) tuples.
-            The variables have to be the same across the K lists.
-        colocation (bool): colocate gradient averaging on the device of the variable.
-        devices (list[str]): assign the averaging to these device in
-            round-robin. Cannot be used together with ``colocation``.
+            The variables have to be shared across the K lists.
         average (bool): do average or sum
-
     Returns:
         (N x 2): A list of N (grad, var) tuples, where grad is averaged or summed over K.
     """
-    assert not (devices is not None and colocation)
-    if devices is not None:
-        assert isinstance(devices, list), devices
-
     nr_tower = len(all_grads)
     if nr_tower == 1:
         return all_grads[0]
@@ -274,21 +283,57 @@ def aggregate_grads(all_grads,
         # Ngpu * 2
         v = grad_and_vars[0][1]
         grads = [g for (g, _) in grad_and_vars]
-
-        if colocation:
-            with tf.device(v.device):       # colocate summed grad with var
-                grad = aggregate(grads)
-        elif devices is None:
+        with tf.device(v.device):       # colocate summed grad with var
             grad = aggregate(grads)
-        else:
-            dev = devices[idx % len(devices)]
-            with tf.device(dev):
-                grad = aggregate(grads)
         ret.append((grad, v))
     return ret
 
 
-average_grads = aggregate_grads
+@under_name_scope('AllReduceNaive')
+def allreduce_grads_naive(all_grads, devices=None, average=True):
+    """
+    AllReduce the gradients with raw ops (instead of collective ops).
+
+    Args:
+        all_grads (K x N): A list of K lists. Each of the list is a list of N grad tuples.
+            The variables have to be the same across the K lists.
+        devices (list[str]): assign the averaging to these device in
+            round-robin. Cannot be used together with ``colocation``.
+        average (bool): do average or sum
+
+    Returns:
+        list[Tensor]: list of grads where each grad is averaged or summed over K.
+    """
+    if devices is not None:
+        assert isinstance(devices, list), devices
+        # device_setter = LeastLoadedDeviceSetter(None, devices)
+
+    nr_tower = len(all_grads)
+    if nr_tower == 1:
+        return all_grads[0]
+
+    def aggregate(grads):
+        if average:
+            return tf.multiply(tf.add_n(grads), 1.0 / nr_tower)
+        else:
+            return tf.add_n(grads)
+
+    grads_ret = []  # N(rev) grads
+    # reverse so the device placement makes the last part of model more balance?
+    all_grads_rev = [x[::-1] for x in all_grads]   # K x N(rev)
+
+    for idx, grads in enumerate(zip(*all_grads_rev)):
+        # grads: K tensors
+        if devices is None:
+            grad = aggregate(grads)
+        else:
+            # dev = device_setter.place_with_balance(v.op)
+            dev = devices[idx % len(devices)]
+            with tf.device(dev):
+                grad = aggregate(grads)
+        grads_ret.append(grad)
+    grads_ret = grads_ret[::-1]
+    return grads_ret
 
 
 # https://github.com/tensorflow/benchmarks/blob/48cbef14a592e02a14beee8e9aef3ad22cadaed1/scripts/tf_cnn_benchmarks/variable_mgr_util.py#L140-L166
@@ -326,6 +371,8 @@ class OverrideCachingDevice(object):
         return var
 
 
+# TODO pack at variable boundary, so that the concat does not have to wait for all
+# grads to be ready
 class GradientPacker(object):
     """
     Concat gradients together to optimize transfer.
@@ -341,7 +388,10 @@ class GradientPacker(object):
             bool - False if grads cannot be packed due to various reasons.
         """
         for g in grads:
-            assert g.shape.is_fully_defined(), "Shape of {} is {}!".format(g.name, g.shape)
+            if not g.shape.is_fully_defined():
+                logger.warn("Found gradient with incomplete shape: "
+                            "{} has shape {}".format(g.name, g.shape))
+                return False
 
         self._shapes = [g.shape for g in grads]
         self._sizes = [g.shape.num_elements() for g in grads]
@@ -350,7 +400,7 @@ class GradientPacker(object):
             logger.info("Skip GradientPacker due to too few gradients.")
             return False
         # should have the same dtype
-        dtypes = set([g.dtype for g in grads])
+        dtypes = {g.dtype for g in grads}
         if len(dtypes) != 1:
             logger.info("Skip GradientPacker due to inconsistent gradient types.")
             return False

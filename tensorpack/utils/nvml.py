@@ -1,10 +1,10 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: nvml.py
 
 import threading
-from ctypes import CDLL, POINTER, Structure, byref, c_uint, c_ulonglong
+from ctypes import (
+    CDLL, POINTER, Structure, byref, c_uint,
+    c_ulonglong, create_string_buffer)
 
 __all__ = ['NVMLContext']
 
@@ -137,6 +137,14 @@ class NvidiaDevice(object):
             "nvmlDeviceGetUtilizationRates")(self.hnd, byref(c_util)))
         return {'gpu': c_util.gpu, 'memory': c_util.memory}
 
+    def name(self):
+        buflen = 1024
+        buf = create_string_buffer(buflen)
+        fn = _NVML.get_function("nvmlDeviceGetName")
+        ret = fn(self.hnd, buf, c_uint(1024))
+        _check_return(ret)
+        return buf.value.decode('utf-8')
+
 
 class NVMLContext(object):
     """Creates a context to query information
@@ -183,6 +191,8 @@ class NVMLContext(object):
         Returns:
             NvidiaDevice: single GPU device
         """
+        num_dev = self.num_devices()
+        assert idx < num_dev, "Cannot obtain device {}: NVML only found {} devices.".format(idx, num_dev)
 
         class GpuDevice(Structure):
             pass
@@ -198,8 +208,8 @@ class NVMLContext(object):
 
 if __name__ == '__main__':
     with NVMLContext() as ctx:
-        print(ctx.devices())
-        print(ctx.devices()[0].utilization())
+        for idx, dev in enumerate(ctx.devices()):
+            print(idx, dev.name())
 
     with NVMLContext() as ctx:
         print(ctx.devices())

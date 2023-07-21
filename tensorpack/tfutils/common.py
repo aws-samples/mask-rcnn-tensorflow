@@ -1,19 +1,18 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: common.py
 
-
 import tensorflow as tf
-from six.moves import map
 
+from ..compat import tfv1
 from ..utils.argtools import graph_memoized
-from ..utils.develop import deprecated
+from .collect_env import collect_env_info
+
 
 __all__ = ['get_default_sess_config',
            'get_global_step_value',
            'get_global_step_var',
-           'get_tf_version_tuple'
+           'get_tf_version_tuple',
+           'collect_env_info'
            # 'get_op_tensor_name',
            # 'get_tensors_by_names',
            # 'get_op_or_tensor_by_name',
@@ -27,13 +26,13 @@ def get_default_sess_config(mem_fraction=0.99):
 
     Args:
         mem_fraction(float): see the `per_process_gpu_memory_fraction` option
-        in TensorFlow's GPUOptions protobuf:
-        https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/protobuf/config.proto
+            in TensorFlow's GPUOptions protobuf:
+            https://github.com/tensorflow/tensorflow/blob/master/tensorflow/core/protobuf/config.proto
 
     Returns:
         tf.ConfigProto: the config to use.
     """
-    conf = tf.ConfigProto()
+    conf = tfv1.ConfigProto()
 
     conf.allow_soft_placement = True
     # conf.log_device_placement = True
@@ -65,12 +64,11 @@ def get_default_sess_config(mem_fraction=0.99):
 def get_global_step_var():
     """
     Returns:
-        tf.Tensor: the global_step variable in the current graph. Create if
-            doesn't exist.
+        tf.Tensor: the global_step variable in the current graph. Create if doesn't exist.
     """
-    scope = tf.VariableScope(reuse=False, name='')  # the root vs
-    with tf.variable_scope(scope):
-        var = tf.train.get_or_create_global_step()
+    scope = tfv1.VariableScope(reuse=False, name='')  # the root vs
+    with tfv1.variable_scope(scope):
+        var = tfv1.train.get_or_create_global_step()
     return var
 
 
@@ -82,8 +80,8 @@ def get_global_step_value():
     Has to be called under a default session.
     """
 
-    return tf.train.global_step(
-        tf.get_default_session(),
+    return tfv1.train.global_step(
+        tfv1.get_default_session(),
         get_global_step_var())
 
 
@@ -112,7 +110,7 @@ def get_tensors_by_names(names):
         names (list):
     """
     ret = []
-    G = tf.get_default_graph()
+    G = tfv1.get_default_graph()
     for n in names:
         opn, varn = get_op_tensor_name(n)
         ret.append(G.get_tensor_by_name(varn))
@@ -129,7 +127,7 @@ def get_op_or_tensor_by_name(name):
     Raises:
         KeyError, if the name doesn't exist
     """
-    G = tf.get_default_graph()
+    G = tfv1.get_default_graph()
 
     def f(n):
         if len(n) >= 3 and n[-2] == ':':
@@ -144,16 +142,11 @@ def get_op_or_tensor_by_name(name):
 
 
 def gpu_available_in_session():
-    sess = tf.get_default_session()
+    sess = tfv1.get_default_session()
     for dev in sess.list_devices():
         if dev.device_type.lower() == 'gpu':
             return True
     return False
-
-
-@deprecated("Use get_tf_version_tuple instead.", "2019-01-31")
-def get_tf_version_number():
-    return float('.'.join(tf.__version__.split('.')[:2]))
 
 
 def get_tf_version_tuple():
@@ -161,17 +154,3 @@ def get_tf_version_tuple():
     Return TensorFlow version as a 2-element tuple (for comparison).
     """
     return tuple(map(int, tf.__version__.split('.')[:2]))
-
-
-def is_tf2():
-    try:
-        from tensorflow.python import tf2
-        return tf2.enabled()
-    except Exception:
-        return False
-
-
-if is_tf2():
-    tfv1 = tf.compat.v1
-else:
-    tfv1 = tf

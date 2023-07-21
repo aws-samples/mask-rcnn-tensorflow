@@ -1,7 +1,5 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-# -*- coding: utf-8 -*-
-# File: backbone.py
 
 import numpy as np
 from contextlib import ExitStack, contextmanager, suppress
@@ -13,19 +11,16 @@ from tensorpack.tfutils.scope_utils import auto_reuse_variable_scope
 from tensorpack.tfutils.varreplace import custom_getter_scope, freeze_variables
 
 from config import config as cfg
-from utils.mixed_precision import mixed_precision_scope
+#from utils.mixed_precision import mixed_precision_scope
 
 @layer_register(log_shape=True)
 def GroupNorm(x, group=32, gamma_initializer=tf.constant_initializer(1.)):
-    shape = x.get_shape().as_list()
-    ndims = len(shape)
-    assert ndims == 4, shape
-    chan = shape[1]
-    assert chan % group == 0, chan
-    group_size = chan // group
-
     orig_shape = tf.shape(x)
+   
+    chan = orig_shape[1]
     h, w = orig_shape[2], orig_shape[3]
+     
+    group_size = chan // group
 
     x = tf.reshape(x, tf.stack([-1, group, group_size, h, w]))
 
@@ -62,7 +57,7 @@ def maybe_reverse_pad(topleft, bottomright):
 
 
 @contextmanager
-def backbone_scope(freeze, data_format='channels_first'):
+def backbone_scope(freeze, seed_gen, data_format='channels_first'):
     """
     Args:
         freeze (bool): whether to freeze all the variables under the scope
@@ -73,8 +68,8 @@ def backbone_scope(freeze, data_format='channels_first'):
 
     with argscope([Conv2D, MaxPooling, BatchNorm], data_format=data_format), \
             argscope(Conv2D, use_bias=False, activation=nonlin,
-                     kernel_initializer=tf.variance_scaling_initializer(
-                         scale=2.0, mode='fan_out')), \
+                     kernel_initializer=tf.keras.initializers.VarianceScaling(
+                         scale=2.0, mode='fan_out', seed=seed_gen.next())), \
             ExitStack() as stack:
         if cfg.BACKBONE.NORM in ['FreezeBN', 'SyncBN']:
             if freeze or cfg.BACKBONE.NORM == 'FreezeBN':
@@ -128,7 +123,7 @@ def get_norm(zero_init=False):
     #return lambda x: Norm(layer_name, x, gamma_initializer=tf.zeros_initializer() if zero_init else None)
 
 
-def resnet_shortcut(l, n_out, stride, seed_gen, activation=tf.identity):
+def resnet_shortcut(l, n_out, stride,  seed_gen, activation=tf.identity):
     n_in = l.shape[1] if cfg.TRAIN.BACKBONE_NCHW else l.shape[-1]
     if n_in != n_out:   # change dimension when channel is not the same
         # TF's SAME mode output ceil(x/stride), which is NOT what we want when x is odd and stride is 2
@@ -163,44 +158,42 @@ def resnet_bottleneck(l, ch_out, stride, seed_gen):
     else:
         l = Conv2D('conv3', l, ch_out * 4, 1, activation=tf.identity,
                    kernel_initializer=tf.constant_initializer(), seed=seed_gen.next())
-    ret = l + resnet_shortcut(shortcut, ch_out * 4, stride, seed_gen=seed_gen, activation=get_norm(zero_init=False))
+    ret = l + resnet_shortcut(shortcut, ch_out * 4, stride,  seed_gen=seed_gen, activation=get_norm(zero_init=False))
     return tf.nn.relu(ret, name='output')
 
 
 def resnet_group(name, l, block_func, features, count, stride, seed_gen):
-    with tf.variable_scope(name):
+    with tf.compat.v1.variable_scope (name):
         for i in range(0, count):
-            with tf.variable_scope('block{}'.format(i)):
+            with tf.compat.v1.variable_scope ('block{}'.format(i)):
                 l = block_func(l, features, stride if i == 0 else 1, seed_gen)
     return l
-
 
 def resnet_c4_backbone(image, num_blocks, seed_gen):
     assert len(num_blocks) == 3
     freeze_at = cfg.BACKBONE.FREEZE_AT
-    with backbone_scope(freeze=freeze_at > 0):
+    with backbone_scope(freeze=freeze_at > 0, seed_gen=seed_gen):
         l = tf.pad(image, [[0, 0], [0, 0], maybe_reverse_pad(2, 3), maybe_reverse_pad(2, 3)])
-        l = Conv2D('conv0', l, 64, 7, strides=2, padding='VALID')
+        l = Conv2D('conv0', l, 64, 7, strides=2, padding='VALID', seed=seed_gen.next())
         l = tf.pad(l, [[0, 0], [0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1)])
         l = MaxPooling('pool0', l, 3, strides=2, padding='VALID')
 
-    with backbone_scope(freeze=freeze_at > 1):
+    with backbone_scope(freeze=freeze_at > 1, seed_gen=seed_gen):
         c2 = resnet_group('group0', l, resnet_bottleneck, 64, num_blocks[0], 1, seed_gen=seed_gen)
-    with backbone_scope(freeze=False):
+    with backbone_scope(freeze=False, seed_gen=seed_gen):
         c3 = resnet_group('group1', c2, resnet_bottleneck, 128, num_blocks[1], 2, seed_gen=seed_gen)
         c4 = resnet_group('group2', c3, resnet_bottleneck, 256, num_blocks[2], 2, seed_gen=seed_gen)
     # 16x downsampling up to now
     return c4
 
-
 @auto_reuse_variable_scope
-def resnet_conv5(image, num_block):
-    with backbone_scope(freeze=False):
-        l = resnet_group('group3', image, resnet_bottleneck, 512, num_block, 2)
+def resnet_conv5(image, num_block, seed_gen):
+    with backbone_scope(freeze=False, seed_gen=seed_gen):
+        l = resnet_group('group3', image, resnet_bottleneck, 512, num_block, 2, seed_gen)
         return l
 
 
-def resnet_fpn_backbone(image, num_blocks, seed_gen, fp16=False):
+def resnet_fpn_backbone(image, num_blocks, seed_gen):
     """
     Args:
         image: BS x NumChannel x H_image x W_image
@@ -212,42 +205,38 @@ def resnet_fpn_backbone(image, num_blocks, seed_gen, fp16=False):
     freeze_at = cfg.BACKBONE.FREEZE_AT
     shape2d = tf.shape(image)[2:] if cfg.TRAIN.BACKBONE_NCHW else tf.shape(image)[1:3]
     mult = float(cfg.FPN.RESOLUTION_REQUIREMENT)
-    new_shape2d = tf.cast(tf.ceil(tf.cast(shape2d, tf.float32) / mult) * mult, tf.int32)
+    new_shape2d = tf.cast(tf.math.ceil(tf.cast(shape2d, tf.float32) / mult) * mult, tf.int32)
     pad_shape2d = new_shape2d - shape2d
     assert len(num_blocks) == 4, num_blocks
 
-    if fp16:
-        image = tf.cast(image, tf.float16)
-
-    with mixed_precision_scope(mixed=fp16):
-        with backbone_scope(freeze=freeze_at > 0, data_format=data_format):
-            chan = image.shape[1] if cfg.TRAIN.BACKBONE_NCHW else image.shape[-1]
-            pad_base = maybe_reverse_pad(2, 3)
-            l = tf.pad(image, tf.stack(
-                [[0, 0],
-                [0, 0],
-                [pad_base[0], pad_base[1] + pad_shape2d[0]],
-                [pad_base[0], pad_base[1] + pad_shape2d[1]]])) if cfg.TRAIN.BACKBONE_NCHW else tf.pad(image, tf.stack(
-                [[0, 0],
-                [pad_base[0], pad_base[1] + pad_shape2d[0]],
-                [pad_base[0], pad_base[1] + pad_shape2d[1]],
-                [0, 0]]))
-            if cfg.TRAIN.BACKBONE_NCHW:
-                l.set_shape([None, chan, None, None])
-            else:
-                l.set_shape([None, None, None, chan])
-            l = Conv2D('conv0', l, 64, 7, strides=2, padding='VALID', seed=seed_gen.next())
-            if cfg.TRAIN.BACKBONE_NCHW:
-                l = tf.pad(l, [[0, 0], [0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1)])
-            else:
-                l = tf.pad(l, [[0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1), [0, 0]])
-            l = MaxPooling('pool0', l, 3, strides=2, padding='VALID')
-        with backbone_scope(freeze=freeze_at > 1, data_format=data_format):
-            c2 = resnet_group('group0', l, resnet_bottleneck, 64, num_blocks[0], 1, seed_gen=seed_gen)
-        with backbone_scope(freeze=False, data_format=data_format):
-            c3 = resnet_group('group1', c2, resnet_bottleneck, 128, num_blocks[1], 2, seed_gen=seed_gen)
-            c4 = resnet_group('group2', c3, resnet_bottleneck, 256, num_blocks[2], 2, seed_gen=seed_gen)
-            c5 = resnet_group('group3', c4, resnet_bottleneck, 512, num_blocks[3], 2, seed_gen=seed_gen)
+    with backbone_scope(freeze=freeze_at > 0, data_format=data_format, seed_gen=seed_gen):
+        chan = image.shape[1] if cfg.TRAIN.BACKBONE_NCHW else image.shape[-1]
+        pad_base = maybe_reverse_pad(2, 3)
+        l = tf.pad(image, tf.stack(
+            [[0, 0],
+            [0, 0],
+            [pad_base[0], pad_base[1] + pad_shape2d[0]],
+            [pad_base[0], pad_base[1] + pad_shape2d[1]]])) if cfg.TRAIN.BACKBONE_NCHW else tf.pad(image, tf.stack(
+            [[0, 0],
+            [pad_base[0], pad_base[1] + pad_shape2d[0]],
+            [pad_base[0], pad_base[1] + pad_shape2d[1]],
+            [0, 0]]))
+        if cfg.TRAIN.BACKBONE_NCHW:
+            l.set_shape([None, chan, None, None])
+        else:
+            l.set_shape([None, None, None, chan])
+        l = Conv2D('conv0', l, 64, 7, strides=2, padding='VALID', seed=seed_gen.next())
+        if cfg.TRAIN.BACKBONE_NCHW:
+            l = tf.pad(l, [[0, 0], [0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1)])
+        else:
+            l = tf.pad(l, [[0, 0], maybe_reverse_pad(0, 1), maybe_reverse_pad(0, 1), [0, 0]])
+        l = MaxPooling('pool0', l, 3, strides=2, padding='VALID')
+    with backbone_scope(freeze=freeze_at > 1, data_format=data_format, seed_gen=seed_gen):
+        c2 = resnet_group('group0', l, resnet_bottleneck, 64, num_blocks[0], 1, seed_gen=seed_gen)
+    with backbone_scope(freeze=False, data_format=data_format, seed_gen=seed_gen):
+        c3 = resnet_group('group1', c2, resnet_bottleneck, 128, num_blocks[1], 2, seed_gen=seed_gen)
+        c4 = resnet_group('group2', c3, resnet_bottleneck, 256, num_blocks[2], 2, seed_gen=seed_gen)
+        c5 = resnet_group('group3', c4, resnet_bottleneck, 512, num_blocks[3], 2, seed_gen=seed_gen)
 
     # 32x downsampling up to now
     # size of c5: ceil(input/32)

@@ -46,7 +46,7 @@ class CustomResize(transform.TransformAugmentorBase):
             short_edge_length = (short_edge_length, short_edge_length)
         self._init(locals())
 
-    def _get_augment_params(self, img):
+    def get_transform(self, img):
         h, w = img.shape[:2]
         size = self.rng.randint(
             self.short_edge_length[0], self.short_edge_length[1] + 1)

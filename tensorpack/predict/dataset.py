@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: dataset.py
 
@@ -8,11 +6,11 @@ import multiprocessing
 import os
 from abc import ABCMeta, abstractmethod
 import six
-from six.moves import range, zip
 
 from ..dataflow import DataFlow
 from ..dataflow.remote import dump_dataflow_to_process_queue
 from ..utils import logger
+from ..utils.develop import HIDE_DOC
 from ..utils.concurrency import DIE, OrderedResultGatherProc, ensure_proc_terminate
 from ..utils.gpu import change_gpu, get_num_gpu
 from ..utils.utils import get_tqdm
@@ -65,6 +63,7 @@ class SimpleDatasetPredictor(DatasetPredictorBase):
         super(SimpleDatasetPredictor, self).__init__(config, dataset)
         self.predictor = OfflinePredictor(config)
 
+    @HIDE_DOC
     def get_result(self):
         self.dataset.reset_state()
         try:
@@ -144,6 +143,7 @@ class MultiProcessDatasetPredictor(DatasetPredictorBase):
             self.result_queue = self.outqueue
         ensure_proc_terminate(self.workers + [self.inqueue_proc])
 
+    @HIDE_DOC
     def get_result(self):
         try:
             sz = len(self.dataset)

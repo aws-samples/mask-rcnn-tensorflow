@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: logger.py
 
@@ -48,7 +46,9 @@ class _MyFormatter(logging.Formatter):
 
 
 def _getlogger():
-    logger = logging.getLogger('tensorpack')
+    # this file is synced to "dataflow" package as well
+    package_name = "dataflow" if __name__.startswith("dataflow") else "tensorpack"
+    logger = logging.getLogger(package_name)
     logger.propagate = False
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
@@ -58,11 +58,14 @@ def _getlogger():
 
 
 _logger = _getlogger()
-_LOGGING_METHOD = ['info', 'warning', 'error', 'critical', 'warn', 'exception', 'debug', 'setLevel']
+_LOGGING_METHOD = ['info', 'warning', 'error', 'critical', 'exception', 'debug', 'setLevel', 'addFilter']
 # export logger functions
 for func in _LOGGING_METHOD:
     locals()[func] = getattr(_logger, func)
     __all__.append(func)
+# 'warn' is deprecated in logging module
+warn = _logger.warning
+__all__.append('warn')
 
 
 def _get_time_str():
@@ -108,6 +111,7 @@ def set_logger_dir(dirname, action=None):
                 old states for you. It simply does nothing.
 
     """
+    dirname = os.path.normpath(dirname)
     global LOG_DIR, _FILE_HANDLER
     if _FILE_HANDLER:
         # unload and close the old file handler, so that we may safely delete the logger directory
@@ -120,9 +124,9 @@ def set_logger_dir(dirname, action=None):
 
     if dir_nonempty(dirname):
         if not action:
-            _logger.warn("""\
+            _logger.warning("""\
 Log directory {} exists! Use 'd' to delete it. """.format(dirname))
-            _logger.warn("""\
+            _logger.warning("""\
 If you're resuming from a previous run, you can choose to keep it.
 Press any other key to exit. """)
         while not action:
@@ -157,7 +161,7 @@ def auto_set_dir(action=None, name=None):
     basename = os.path.basename(mod.__file__)
     auto_dirname = os.path.join('train_log', basename[:basename.rfind('.')])
     if name:
-        auto_dirname += ':%s' % name
+        auto_dirname += '_%s' % name if os.name == 'nt' else ':%s' % name
     set_logger_dir(auto_dirname, action=action)
 
 

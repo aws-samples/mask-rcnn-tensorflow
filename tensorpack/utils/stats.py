@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: stats.py
 
@@ -48,6 +46,12 @@ class StatCounter(object):
     def min(self):
         assert len(self._values)
         return min(self._values)
+
+    def samples(self):
+        """
+        Returns all samples.
+        """
+        return self._values
 
 
 class RatioCounter(object):

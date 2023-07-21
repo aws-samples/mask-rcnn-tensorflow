@@ -1,18 +1,15 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: tower.py
 
 from abc import ABCMeta, abstractmethod
-import os
 import six
 import tensorflow as tf
-import os
 
+from ..compat import tfv1, is_tfv2
 from ..input_source import PlaceholderInput
 from ..predict.base import OnlinePredictor
-from ..tfutils.gradproc import FilterNoneGrad, SummaryGradient
-from ..tfutils.tower import PredictTowerContext, TowerFuncWrapper, get_current_tower_context
+from ..tfutils.gradproc import FilterNoneGrad
+from ..tfutils.tower import PredictTowerContext, TowerFunc, get_current_tower_context
 from ..utils import logger
 from ..utils.argtools import call_only_once, memoized
 from ..utils.develop import HIDE_DOC
@@ -25,11 +22,12 @@ class TowerTrainer(Trainer):
     """
     Base trainers for models that can be built by calling a tower function under a :class:`TowerContext`.
 
-    This is required by some features that replicates the model
-    automatically, e.g. creating a predictor.
+    The assumption of tower function is required by some features that replicates the model
+    automatically. For example, TowerTrainer can create a predictor for you automatically,
+    by calling the tower function.
 
-    To use features of :class:`TowerTrainer`, set `tower_func` and use it to build the graph.
-    Note that `tower_func` can only be set once per instance.
+    To use :class:`TowerTrainer`, set `tower_func` and use it to build the graph.
+    Note that `tower_func` can only be set once per instance of `TowerTrainer`.
     """
 
     _tower_func = None
@@ -41,14 +39,15 @@ class TowerTrainer(Trainer):
 
     @call_only_once
     def _set_tower_func(self, tower_func):
-        assert isinstance(tower_func, TowerFuncWrapper), tower_func
+        assert isinstance(tower_func, TowerFunc), tower_func
         self._tower_func = tower_func
 
     @property
     def tower_func(self):
         """
-        A :class:`TowerFuncWrapper` instance.
-        See [tutorial on tower function](http://tensorpack.readthedocs.io/tutorial/trainer.html#tower-trainer)
+        A :class:`TowerFunc` instance.
+        See `tutorial on tower function
+        <http://tensorpack.readthedocs.io/tutorial/trainer.html#tower-trainer>`_
         for more information.
         """
         return self._tower_func
@@ -58,21 +57,18 @@ class TowerTrainer(Trainer):
         self._set_tower_func(val)
 
     @property
-    def inputs_desc(self):
+    def input_signature(self):
         """
-        Returns:
-            list[InputDesc]: metainfo about the inputs to the tower.
+        list[tf.TensorSpec]: metainfo about the inputs to the tower.
         """
-        return self.tower_func.inputs_desc
+        return self.tower_func.input_signature
 
     @property
     def towers(self):
         """
-        Returns:
-            a :class:`TowerTensorHandles` object, to
-            access the tower handles by either indices or names.
+        TowerTensorHandles: used to access the tower handles by either indices or names.
 
-        It is accessbile only after the graph is set up.
+        This property is accessbile only after the graph is set up.
         With :meth:`towers`, you can then access many attributes of each tower:
 
         Example:
@@ -88,6 +84,11 @@ class TowerTrainer(Trainer):
         """
         This method will build the trainer's tower function under ``TowerContext(is_training=False)``,
         and returns a callable predictor with input placeholders & output tensors in this tower.
+
+        This method handles the common case where you inference with the same tower function
+        you provide to the trainer.
+        If you want to do inference with a different tower function, you can always build the tower by yourself,
+        under a "reuse" variable scope and a `TowerContext(is_training=False)`.
 
         Args:
             input_names (list): list of input names, matching the inputs declared for the trainer.
@@ -123,10 +124,10 @@ class TowerTrainer(Trainer):
 
         if tower is None:
             input = PlaceholderInput()
-            input.setup(self.inputs_desc)
+            input.setup(self.input_signature)
 
             vs_name = self._vs_name_for_predictor(device_id)
-            with tf.variable_scope(tf.get_variable_scope(), reuse=True), \
+            with tfv1.variable_scope(tfv1.get_variable_scope(), reuse=True), \
                     tf.device(device), PredictTowerContext(
                         tower_name, vs_name=vs_name):
                 logger.info("Building graph for predict tower '{}' on device {} {}...".format(
@@ -163,7 +164,7 @@ class SingleCostTrainer(TowerTrainer):
     Base class for single-cost trainer.
 
     Single-cost trainer has a :meth:`setup_graph` method which takes
-    (inputs_desc, input, get_cost_fn, get_opt_fn), and build the training graph from them.
+    (input_signature, input, get_cost_fn, get_opt_fn), and build the training graph from them.
 
     To use a :class:`SingleCostTrainer` object, call `trainer.setup_graph(...); trainer.train(...)`.
     """
@@ -193,13 +194,13 @@ class SingleCostTrainer(TowerTrainer):
     """
 
     @call_only_once
-    def setup_graph(self, inputs_desc, input, get_cost_fn, get_opt_fn):
+    def setup_graph(self, input_signature, input, get_cost_fn, get_opt_fn):
         """
         Responsible for building the main training graph for single-cost training.
 
         Args:
-            inputs_desc ([InputDesc]):
-            input (InputSource):
+            input_signature ([TensorSpec]): list of TensorSpec that describe the inputs
+            input (InputSource): an InputSource which has to match the input signature
             get_cost_fn ([tf.Tensor] -> tf.Tensor): callable, takes some input tensors and return a cost tensor.
             get_opt_fn (-> tf.train.Optimizer): callable which returns an
                 optimizer. Will only be called once.
@@ -209,12 +210,12 @@ class SingleCostTrainer(TowerTrainer):
             It must follows the `rules of tower function.
             <http://tensorpack.readthedocs.io/tutorial/trainer.html#tower-trainer>`_.
         """
-        get_cost_fn = TowerFuncWrapper(get_cost_fn, inputs_desc)
+        get_cost_fn = TowerFunc(get_cost_fn, input_signature)
         get_opt_fn = memoized(get_opt_fn)
         self.tower_func = get_cost_fn
 
         # TODO setup may want to register monitor as well??
-        input_callbacks = self._setup_input(inputs_desc, input)
+        input_callbacks = self._setup_input(input_signature, input)
         train_callbacks = self._setup_graph(input, get_cost_fn, get_opt_fn)
         self.register_callback(input_callbacks + train_callbacks)
 
@@ -228,9 +229,9 @@ class SingleCostTrainer(TowerTrainer):
             [Callback]: list of callbacks needed
         """
 
-    def _setup_input(self, inputs_desc, input):
+    def _setup_input(self, input_signature, input):
         assert not input.setup_done()
-        return input.setup(inputs_desc)
+        return input.setup(input_signature)
 
     def _make_get_grad_fn(self, input, get_cost_fn, get_opt_fn):
         """
@@ -247,50 +248,37 @@ class SingleCostTrainer(TowerTrainer):
 
             def compute_grad_from_inputs(*inputs):
                 cost = get_cost_fn(*inputs)
-                assert isinstance(cost, tf.Tensor), cost
+                assert isinstance(cost, tf.Tensor), \
+                    "Expect the given function to return a cost, but got {} instead".format(str(cost))
                 assert cost.shape.ndims == 0, "Cost must be a scalar, but found {}!".format(cost)
 
                 if not ctx.is_training:
                     return None     # this is the tower function, could be called for inference
 
                 if ctx.has_own_variables:
-                    varlist = ctx.get_collection_in_tower(tf.GraphKeys.TRAINABLE_VARIABLES)
+                    varlist = ctx.get_collection_in_tower(tfv1.GraphKeys.TRAINABLE_VARIABLES)
                 else:
-                    varlist = tf.trainable_variables()
-
-                if os.getenv("TENSORPACK_FP16"):
-
-                    loss_scale = 1024.0
-
-                    if os.getenv("CUSTOM_LOSS_SCALE"):
-                        loss_scale = float(os.getenv("CUSTOM_LOSS_SCALE"))
-
-                    print(f'TENSORPACK_FP16 set. Using FP16 loss scaling of {loss_scale}')
-                    cost *= loss_scale
-
+                    varlist = tfv1.trainable_variables()
                 opt = get_opt_fn()
-                grads = opt.compute_gradients(
-                    cost, var_list=varlist,
-                    gate_gradients=self.GATE_GRADIENTS,
-                    colocate_gradients_with_ops=self.COLOCATE_GRADIENTS_WITH_OPS,
-                    aggregation_method=self.AGGREGATION_METHOD)
+                if is_tfv2() and isinstance(opt, tf.optimizers.Optimizer):
+                    grads = opt.get_gradients(cost, varlist)
+                    grads = list(zip(grads, varlist))
+                else:
+                    grads = opt.compute_gradients(
+                        cost, var_list=varlist,
+                        gate_gradients=self.GATE_GRADIENTS,
+                        colocate_gradients_with_ops=self.COLOCATE_GRADIENTS_WITH_OPS,
+                        aggregation_method=self.AGGREGATION_METHOD)
                 grads = FilterNoneGrad().process(grads)
-
-                if os.getenv("TENSORPACK_FP16"):
-                    grads = [(g * 1.0 / loss_scale, v) for g, v in grads]
-
-                if os.getenv("TENSORPACK_SUMMARY_GRADIENT"):
-                    grads = SummaryGradient().process(grads)
-
-                if os.getenv("TENSORPACK_FREEZE_VARS"):
-                    grads = [ (g - g, v) for g, v in grads ]
-
                 return grads
 
             if not self.XLA_COMPILE:
                 return compute_grad_from_inputs(*inputs)
             else:
-                from tensorflow.contrib.compiler import xla
+                try:
+                    from tensorflow.contrib.compiler import xla  # deprecated
+                except ImportError:
+                    from tensorflow.python.compiler.xla import xla
 
                 def xla_func():
                     grads = compute_grad_from_inputs(*inputs)
@@ -301,9 +289,9 @@ class SingleCostTrainer(TowerTrainer):
 
                 grads_no_vars = xla.compile(xla_func)
                 if ctx.has_own_variables:
-                    varlist = ctx.get_collection_in_tower(tf.GraphKeys.TRAINABLE_VARIABLES)
+                    varlist = ctx.get_collection_in_tower(tfv1.GraphKeys.TRAINABLE_VARIABLES)
                 else:
-                    varlist = tf.trainable_variables()
+                    varlist = tfv1.trainable_variables()
                 return list(zip(grads_no_vars, varlist))
 
         return get_grad_fn

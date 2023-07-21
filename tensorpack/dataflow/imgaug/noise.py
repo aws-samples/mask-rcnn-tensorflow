@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: noise.py
 
@@ -7,12 +5,12 @@
 import numpy as np
 import cv2
 
-from .base import ImageAugmentor
+from .base import PhotometricAugmentor
 
 __all__ = ['JpegNoise', 'GaussianNoise', 'SaltPepperNoise']
 
 
-class JpegNoise(ImageAugmentor):
+class JpegNoise(PhotometricAugmentor):
     """ Random JPEG noise. """
 
     def __init__(self, quality_range=(40, 100)):
@@ -31,7 +29,7 @@ class JpegNoise(ImageAugmentor):
         return cv2.imdecode(enc, 1).astype(img.dtype)
 
 
-class GaussianNoise(ImageAugmentor):
+class GaussianNoise(PhotometricAugmentor):
     """
     Add random Gaussian noise N(0, sigma^2) of the same shape to img.
     """
@@ -55,7 +53,7 @@ class GaussianNoise(ImageAugmentor):
         return ret.astype(old_dtype)
 
 
-class SaltPepperNoise(ImageAugmentor):
+class SaltPepperNoise(PhotometricAugmentor):
     """ Salt and pepper noise.
         Randomly set some elements in image to 0 or 255, regardless of its channels.
     """

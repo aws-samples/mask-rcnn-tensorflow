@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: graph.py
 
@@ -8,9 +6,8 @@
 
 import numpy as np
 import os
-import tensorflow as tf
-from six.moves import zip
 
+from ..compat import tfv1 as tf
 from ..tfutils.common import get_op_tensor_name
 from ..utils import logger
 from .base import Callback
@@ -30,7 +27,7 @@ class RunOp(Callback):
         """
         Args:
             op (tf.Operation or function): an Op, or a function that returns the Op in the graph.
-                The function will be called after the main graph has been created (in the `setup_graph` callback).
+                The function will be called after the main graph has been created (in the :meth:`setup_graph` callback).
             run_before (bool): run the Op before training
             run_as_trigger (bool): run the Op on every :meth:`trigger()` call.
             run_step (bool): run the Op every step (along with training)
@@ -78,8 +75,13 @@ class RunOp(Callback):
 class RunUpdateOps(RunOp):
     """
     Run ops from the collection UPDATE_OPS every step.
-    The ops will be hooked to `trainer.hooked_sess` and run along with
-    each `sess.run` call.
+    The ops will be hooked to ``trainer.hooked_sess`` and run along with
+    each ``hooked_sess.run`` call.
+
+    Be careful when using ``UPDATE_OPS`` if your model contains more than one sub-networks.
+    Perhaps not all updates are supposed to be executed in every iteration.
+
+    This callback is one of the :func:`DEFAULT_CALLBACKS()`.
     """
 
     def __init__(self, collection=None):
@@ -107,7 +109,7 @@ class ProcessTensors(Callback):
     """
     Fetch extra tensors **along with** each training step,
     and call some function over the values.
-    It uses `_{before,after}_run` method to inject `tf.train.SessionRunHooks`
+    It uses ``_{before,after}_run`` method to inject ``tf.train.SessionRunHooks``
     to the session.
     You can use it to print tensors, save tensors to file, etc.
 
@@ -217,18 +219,27 @@ class DumpTensorAsImage(Callback):
         cv2.imwrite(fname, res.astype('uint8'))
 
 
-class CheckNumerics(Callback):
+class CheckNumerics(RunOp):
     """
-    When triggered, check variables in the graph for NaN and Inf.
-    Raise exceptions if such an error is found.
+    Check variables in the graph for NaN and Inf.
+    Raise an exception if such an error is found.
     """
-    def _setup_graph(self):
+    _chief_only = True
+
+    def __init__(self, run_as_trigger=True, run_step=False):
+        """
+        Args: same as in :class:`RunOp`.
+        """
+        super().__init__(
+            self._get_op,
+            run_as_trigger=run_as_trigger,
+            run_step=run_step)
+
+    def _get_op(self):
         vars = tf.trainable_variables()
         ops = [tf.check_numerics(v, "CheckNumerics['{}']".format(v.op.name)).op for v in vars]
-        self._check_op = tf.group(*ops)
-
-    def _trigger(self):
-        self._check_op.run()
+        check_op = tf.group(*ops, name="CheckAllNumerics")
+        return check_op
 
 
 try:

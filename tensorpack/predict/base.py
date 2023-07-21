@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: base.py
 
@@ -9,12 +7,11 @@ import six
 import tensorflow as tf
 
 from ..input_source import PlaceholderInput
-from ..tfutils.common import get_tensors_by_names
+from ..tfutils.common import get_tensors_by_names, get_op_tensor_name
 from ..tfutils.tower import PredictTowerContext
 
-__all__ = ['PredictorBase', 'AsyncPredictorBase',
-           'OnlinePredictor', 'OfflinePredictor',
-           ]
+__all__ = ['PredictorBase',
+           'OnlinePredictor', 'OfflinePredictor']
 
 
 @six.add_metaclass(ABCMeta)
@@ -37,6 +34,9 @@ class PredictorBase(object):
             .. code-block:: python
 
                 predictor(e1, e2)
+
+        Returns:
+            list[array]: list of outputs
         """
         output = self._do_call(dp)
         if self.return_input:
@@ -64,7 +64,7 @@ class AsyncPredictorBase(PredictorBase):
             dp (list): A datapoint as inputs. It could be either batched or not
                 batched depending on the predictor implementation).
             callback: a thread-safe callback to get called with
-                either outputs or (inputs, outputs).
+                either outputs or (inputs, outputs), if `return_input` is True.
         Returns:
             concurrent.futures.Future: a Future of results
         """
@@ -74,23 +74,21 @@ class AsyncPredictorBase(PredictorBase):
         """ Start workers """
 
     def _do_call(self, dp):
-        assert six.PY3, "With Python2, sync methods not available for async predictor"
         fut = self.put_task(dp)
         # in Tornado, Future.result() doesn't wait
         return fut.result()
 
 
 class OnlinePredictor(PredictorBase):
-    """ A predictor which directly use an existing session and given tensors.
+    """
+    A predictor which directly use an existing session and given tensors.
+
+    Attributes:
+        sess: The tf.Session object associated with this predictor.
     """
 
     ACCEPT_OPTIONS = False
     """ See Session.make_callable """
-
-    sess = None
-    """
-    The tf.Session object associated with this predictor.
-    """
 
     def __init__(self, input_tensors, output_tensors,
                  return_input=False, sess=None):
@@ -103,9 +101,14 @@ class OnlinePredictor(PredictorBase):
                 will use the default session at the first call.
                 Note that in TensorFlow, default session is thread-local.
         """
+        def normalize_name(t):
+            if isinstance(t, six.string_types):
+                return get_op_tensor_name(t)[1]
+            return t
+
         self.return_input = return_input
-        self.input_tensors = input_tensors
-        self.output_tensors = output_tensors
+        self.input_tensors = [normalize_name(x) for x in input_tensors]
+        self.output_tensors = [normalize_name(x) for x in output_tensors]
         self.sess = sess
 
         if sess is not None:
@@ -135,7 +138,20 @@ class OnlinePredictor(PredictorBase):
 
 class OfflinePredictor(OnlinePredictor):
     """ A predictor built from a given config.
-        A single-tower model will be built without any prefix. """
+        A single-tower model will be built without any prefix.
+
+        Example:
+
+        .. code-block:: python
+
+            config = PredictConfig(model=my_model,
+                                   inputs_names=['image'],
+                                   # use names of tensors defined in the model
+                                   output_names=['linear/output', 'prediction'])
+            predictor = OfflinePredictor(config)
+            image = np.random.rand(1, 100, 100, 3)  # the shape of "image" defined in the model
+            linear_output, prediction = predictor(image)
+    """
 
     def __init__(self, config):
         """
@@ -145,7 +161,7 @@ class OfflinePredictor(OnlinePredictor):
         self.graph = config._maybe_create_graph()
         with self.graph.as_default():
             input = PlaceholderInput()
-            input.setup(config.inputs_desc)
+            input.setup(config.input_signature)
             with PredictTowerContext(''):
                 config.tower_func(*input.get_input_tensors())
 

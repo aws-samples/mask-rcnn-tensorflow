@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: optimizer.py
 
@@ -7,7 +5,7 @@
 from contextlib import contextmanager
 import tensorflow as tf
 
-from ..tfutils.common import get_tf_version_tuple, tfv1
+from ..compat import tfv1
 from ..utils.develop import HIDE_DOC
 from .gradproc import FilterNoneGrad, GradientProcessor
 
@@ -21,7 +19,7 @@ class ProxyOptimizer(tfv1.train.Optimizer):
     A transparent proxy which delegates all methods of :class:`tf.train.Optimizer`
     """
     def __init__(self, opt, name='ProxyOptimizer'):
-        assert isinstance(opt, tf.train.Optimizer), opt
+        assert isinstance(opt, tfv1.train.Optimizer), opt
         super(ProxyOptimizer, self).__init__(False, name)
         self._opt = opt
 
@@ -111,12 +109,8 @@ class PostProcessOptimizer(ProxyOptimizer):
 
     @contextmanager
     def _maybe_colocate(self, var):
-        G = tf.get_default_graph()
-        if self._colocate and get_tf_version_tuple() <= (1, 12):
-            with G.colocate_with(var):
-                yield
-        else:
-            yield
+        G = tf.compat.v1.get_default_graph()
+        yield
 
 
 class VariableAssignmentOptimizer(PostProcessOptimizer):
@@ -135,7 +129,7 @@ class VariableAssignmentOptimizer(PostProcessOptimizer):
             t = func(v)
             if t is None:
                 return t
-            return tf.assign(v, t, use_locking=False).op
+            return tfv1.assign(v, t, use_locking=False).op
         super(VariableAssignmentOptimizer, self).__init__(opt, f)
 
 
@@ -146,8 +140,17 @@ class AccumGradOptimizer(ProxyOptimizer):
     This is roughly the same as using a :math:`k` times larger batch size plus a
     :math:`k` times larger learning rate, but uses much less memory.
 
-    Note that this implementation may not support all models.
-    E.g., it doesn't support sparse gradient update.
+    This optimizer can be used in any TensorFlow code (with or without tensorpack).
+
+    Example:
+
+    .. code-block:: python
+
+        from tensorpack.tfutils.optimizer import AccumGradOptimizer
+        myopt = tf.train.GradientDescentOptimizer(0.01)
+        myopt = AccumGradOptimizer(myopt, niter=5)
+        train_op = myopt.minimize(loss)
+
     """
 
     def __init__(self, opt, niter):
@@ -169,24 +172,19 @@ class AccumGradOptimizer(ProxyOptimizer):
 
     @HIDE_DOC
     def apply_gradients(self, grads_and_vars, global_step=None, name=None):
-        assert global_step is None, \
-            "AccumGradOptimizer doesn't support the option global_step! " \
-            "Please maintain it yourself."
         grads_and_vars = FilterNoneGrad().process(grads_and_vars)
         vs = []
         for g, v in grads_and_vars:
-            assert isinstance(g, tf.Tensor) and isinstance(v, tf.Variable), \
-                "AccumGradOptimizer only works for dense update! " \
-                "Types of v and g are {} and {}".format(type(v), type(g))
+            assert isinstance(g, (tf.Tensor, tf.IndexedSlices)) and isinstance(v, tf.Variable), \
+                "AccumGradOptimizer does not work for the gradient of {}! " \
+                "Types of v and g are {} and {}".format(v.op.name, type(v), type(g))
             vs.append(v)
 
         with tf.control_dependencies(None):
             slots = self._create_accum_slots(vs)
             slots_and_vars = [(s, gv[1]) for s, gv in zip(slots, grads_and_vars)]
 
-            # Create the counter on the same device as the first variable.
-            with tf.variable_scope(self._name), \
-                    vs[0].graph.colocate_with(vs[0]):
+            with tfv1.variable_scope(self._name), tf.device('/cpu:0'):
                 counter = tf.Variable(
                     0, name="counter", trainable=False, dtype=tf.int32)
 
@@ -195,35 +193,45 @@ class AccumGradOptimizer(ProxyOptimizer):
             for s, gv in zip(slots, grads_and_vars):
                 g, v = gv
                 ops.append(s.assign_add(g))
-            update_counter = tf.assign_add(counter, 1, name='update_counter')
+            update_counter = tfv1.assign_add(counter, 1, name='update_counter')
             update_slot_op = tf.group(update_counter, *ops, name='update_slot')
 
             def update_grad():
                 update_op = self._opt.apply_gradients(slots_and_vars)
                 with tf.control_dependencies([update_op]):
-                    clear_ops = [tf.assign(s, tf.zeros_like(s)) for s in slots]
+                    clear_ops = [tfv1.assign(s, tf.zeros_like(s)) for s in slots]
                 return tf.group(*clear_ops, name='update_grad')
 
-            pred = tf.equal(tf.mod(counter, self._niter), 0)
+            pred = tf.equal(tfv1.mod(counter, self._niter), 0)
             with tf.control_dependencies([update_slot_op]):
                 if name is None:
                     name = 'cond_update_grad'
-                op = tf.cond(pred, update_grad, tf.no_op, name=name).op
+                op = tf.cond(pred, update_grad, tf.no_op)
+
+            if global_step is not None:
+                # Tensorpack maintains global_step by other means,
+                # so this option is useless in tensorpack trainers.
+                # But we include the implementation here for completeness
+                global_step_increment = tfv1.assign_add(global_step, 1)
+                op = tf.group(op, global_step_increment, name=name)
+            else:
+                op = tf.identity(op, name=name).op
         return op
 
 
 if __name__ == '__main__':
     # run it with "python -m tensorpack.tfutils.optimizer"
 
-    x = tf.get_variable('x', shape=[6])
+    x = tfv1.get_variable('x', shape=[6])
     cost = tf.reduce_sum(tf.abs(x), name='cost')
     opt = tf.train.GradientDescentOptimizer(0.01)
     opt = AccumGradOptimizer(opt, 5)
-    min_op = opt.minimize(cost)
+    min_op = opt.minimize(cost, global_step=tf.train.get_or_create_global_step())
 
     sess = tf.Session()
     sess.run(tf.global_variables_initializer())
     with sess.as_default():
-        for k in range(20):
+        for _ in range(20):
             min_op.run()
             print(x.eval())
+        print(tf.train.get_or_create_global_step().eval())

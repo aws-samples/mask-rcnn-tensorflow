@@ -1,19 +1,18 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: config.py
 
 import os
-import tensorflow as tf
 
+from ..compat import tfv1
 from ..callbacks import (
     JSONWriter, MergeAllSummaries, MovingAverageSummary, ProgressBar, RunUpdateOps, ScalarPrinter, TFEventWriter)
 from ..dataflow.base import DataFlow
-from ..graph_builder.model_desc import ModelDescBase
 from ..input_source import InputSource
 from ..tfutils.sesscreate import NewSessionCreator
 from ..tfutils.sessinit import SaverRestore, SessionInit
 from ..utils import logger
+
+from .model_desc import ModelDescBase
 
 __all__ = ['TrainConfig', 'AutoResumeTrainConfig', 'DEFAULT_CALLBACKS', 'DEFAULT_MONITORS']
 
@@ -62,8 +61,7 @@ class TrainConfig(object):
                  model=None,
                  callbacks=None, extra_callbacks=None, monitors=None,
                  session_creator=None, session_config=None, session_init=None,
-                 starting_epoch=1, steps_per_epoch=None, max_epoch=99999,
-                 **kwargs):
+                 starting_epoch=1, steps_per_epoch=None, max_epoch=99999):
         """
         Args:
             dataflow (DataFlow):
@@ -95,7 +93,10 @@ class TrainConfig(object):
 
             starting_epoch (int): The index of the first epoch.
             steps_per_epoch (int): the number of steps (defined by :meth:`Trainer.run_step`) to run in each epoch.
-                Defaults to the input data size.
+                Defaults to the input data size. You may want to divide it by the #GPUs in multi-GPU training.
+
+                Number of steps per epoch only affects the schedule of callbacks.
+                It does not affect the sequence of input data seen by the model.
             max_epoch (int): maximum number of epoch to run training.
         """
 
@@ -158,14 +159,6 @@ class TrainConfig(object):
         self.starting_epoch = int(starting_epoch)
         self.max_epoch = int(max_epoch)
 
-        if 'nr_tower' in kwargs:
-            self.nr_tower = kwargs.pop('nr_tower')
-        if 'tower' in kwargs:
-            self.tower = kwargs.pop('tower')
-        else:
-            self.tower = [0]
-        assert len(kwargs) == 0, "Unknown arguments: {}".format(kwargs.keys())
-
 
 class AutoResumeTrainConfig(TrainConfig):
     """
@@ -180,6 +173,17 @@ class AutoResumeTrainConfig(TrainConfig):
 
     You can choose to let the above two option to either overwrite or
     not overwrite user-provided arguments, as explained below.
+
+    Note that the functionality requires the logging directory to obtain
+    necessary information from a previous run.
+    If you have unconventional setup of logging directory, this class will not
+    work for you, for example:
+
+        1. If you save the checkpoint to a different directory rather than the
+           logging directory.
+
+        2. If in distributed training the directory is not
+           available to every worker, or the directories are different for different workers.
     """
     def __init__(self, always_resume=True, **kwargs):
         """
@@ -190,18 +194,18 @@ class AutoResumeTrainConfig(TrainConfig):
             kwargs: same as in :class:`TrainConfig`.
 
         Note:
-            The main goal of this class is to let a training job to resume
+            The main goal of this class is to let a training job resume
             without changing any line of code or command line arguments.
-            So it's useful to let resume take priority over user-provided arguments sometimes:
+            So it's useful to let resume take priority over user-provided arguments sometimes.
 
-            If your training starts from a pre-trained model,
+            For example: if your training starts from a pre-trained model,
             you would want it to use user-provided model loader at the
             beginning, but a "resume" model loader when the job was
             interrupted and restarted.
         """
         found_sessinit = False
         if always_resume or 'session_init' not in kwargs:
-            sessinit = self._get_sessinit_resume()
+            sessinit = self.get_sessinit_resume()
             if sessinit is not None:
                 found_sessinit = True
                 path = sessinit.path
@@ -214,7 +218,7 @@ class AutoResumeTrainConfig(TrainConfig):
 
         found_last_epoch = False
         if always_resume or 'starting_epoch' not in kwargs:
-            last_epoch = self._get_last_epoch()
+            last_epoch = JSONWriter.load_existing_epoch_number()
             if last_epoch is not None:
                 found_last_epoch = True
                 now_epoch = last_epoch + 1
@@ -226,14 +230,13 @@ class AutoResumeTrainConfig(TrainConfig):
 
         super(AutoResumeTrainConfig, self).__init__(**kwargs)
 
-    def _get_sessinit_resume(self):
-        logdir = logger.get_logger_dir()
-        if not logdir:
+    @staticmethod
+    def get_sessinit_resume(dir=None):
+        if dir is None:
+            dir = logger.get_logger_dir()
+        if not dir:
             return None
-        path = os.path.join(logdir, 'checkpoint')
-        if not tf.gfile.Exists(path):
+        path = os.path.join(dir, 'checkpoint')
+        if not tfv1.gfile.Exists(path):
             return None
         return SaverRestore(path)
-
-    def _get_last_epoch(self):
-        return JSONWriter.load_existing_epoch_number()

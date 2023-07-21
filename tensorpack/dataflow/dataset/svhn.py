@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: svhn.py
 
@@ -64,15 +62,18 @@ class SVHNDigit(RNGDataFlow):
             yield [self.X[k], self.Y[k]]
 
     @staticmethod
-    def get_per_pixel_mean():
+    def get_per_pixel_mean(names=('train', 'test', 'extra')):
         """
+        Args:
+            names (tuple[str]): names of the dataset split
+
         Returns:
-            a 32x32x3 image
+            a 32x32x3 image, the mean of all images in the given datasets
         """
-        a = SVHNDigit('train')
-        b = SVHNDigit('test')
-        c = SVHNDigit('extra')
-        return np.concatenate((a.X, b.X, c.X)).mean(axis=0)
+        for name in names:
+            assert name in ['train', 'test', 'extra'], name
+        images = [SVHNDigit(x).X for x in names]
+        return np.concatenate(tuple(images)).mean(axis=0)
 
 
 try:

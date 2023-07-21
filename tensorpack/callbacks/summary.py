@@ -1,13 +1,11 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: summary.py
 
 
 import numpy as np
 from collections import deque
-import tensorflow as tf
 
+from ..compat import tfv1 as tf
 from ..tfutils.common import get_op_tensor_name
 from ..utils import logger
 from ..utils.naming import MOVING_SUMMARY_OPS_KEY
@@ -18,12 +16,13 @@ __all__ = ['MovingAverageSummary', 'MergeAllSummaries', 'SimpleMovingAverage']
 
 class MovingAverageSummary(Callback):
     """
-    This callback is enabled by default.
     Maintain the moving average of summarized tensors in every step,
     by ops added to the collection.
-    Note that it only __maintains__ the moving averages by updating
+    Note that it only **maintains** the moving averages by updating
     the relevant variables in the graph,
     the actual summary should be done in other callbacks.
+
+    This callback is one of the :func:`DEFAULT_CALLBACKS()`.
     """
     def __init__(self, collection=MOVING_SUMMARY_OPS_KEY, train_op=None):
         """
@@ -120,8 +119,9 @@ class MergeAllSummaries_RunWithOp(Callback):
 
 def MergeAllSummaries(period=0, run_alone=False, key=None):
     """
-    This callback is enabled by default.
-    Evaluate all summaries by `tf.summary.merge_all`, and write them to logs.
+    Evaluate all summaries by ``tf.summary.merge_all``, and write them to logs.
+
+    This callback is one of the :func:`DEFAULT_CALLBACKS()`.
 
     Args:
         period (int): by default the callback summarizes once every epoch.
@@ -132,7 +132,7 @@ def MergeAllSummaries(period=0, run_alone=False, key=None):
             `sess.run` calls, in the last step of each epoch.
             For :class:`SimpleTrainer`, it needs to be False because summary may
             depend on inputs.
-        key (str): the collection of summary tensors. Same as in `tf.summary.merge_all`.
+        key (str): the collection of summary tensors. Same as in ``tf.summary.merge_all``.
             Default is ``tf.GraphKeys.SUMMARIES``.
     """
     if key is None:

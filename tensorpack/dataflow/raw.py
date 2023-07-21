@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: raw.py
 
@@ -7,7 +5,6 @@
 import copy
 import numpy as np
 import six
-from six.moves import range
 
 from .base import DataFlow, RNGDataFlow
 
@@ -88,8 +85,7 @@ class DataFromList(RNGDataFlow):
 
     def __iter__(self):
         if not self.shuffle:
-            for k in self.lst:
-                yield k
+            yield from self.lst
         else:
             idxs = np.arange(len(self.lst))
             self.rng.shuffle(idxs)
@@ -107,15 +103,16 @@ class DataFromGenerator(DataFlow):
         Args:
             gen: iterable, or a callable that returns an iterable
         """
-        if not callable(gen):
-            self._gen = lambda: gen
-        else:
-            self._gen = gen
+        self._gen = gen
 
     def __iter__(self):
-        # yield from
-        for dp in self._gen():
-            yield dp
+        if not callable(self._gen):
+            yield from self._gen
+        else:
+            yield from self._gen()
+
+    def __len__(self):
+        return len(self._gen)
 
 
 class DataFromIterable(DataFlow):
@@ -123,14 +120,18 @@ class DataFromIterable(DataFlow):
     def __init__(self, iterable):
         """
         Args:
-            iterable: an iterable object with length
+            iterable: an iterable object
         """
         self._itr = iterable
-        self._len = len(iterable)
+        try:
+            self._len = len(iterable)
+        except Exception:
+            self._len = None
 
     def __len__(self):
+        if self._len is None:
+            raise NotImplementedError
         return self._len
 
     def __iter__(self):
-        for dp in self._itr:
-            yield dp
+        yield from self._itr

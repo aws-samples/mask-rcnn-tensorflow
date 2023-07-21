@@ -1,22 +1,20 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: concurrency.py
 
 
 import multiprocessing
 import numpy as np
-import six
+from concurrent.futures import Future
 import tensorflow as tf
 from six.moves import queue, range
 
+from ..compat import tfv1
 from ..tfutils.model_utils import describe_trainable_vars
 from ..utils import logger
 from ..utils.concurrency import DIE, ShareSessionThread, StoppableThread
 from .base import AsyncPredictorBase, OfflinePredictor, OnlinePredictor
 
-__all__ = ['MultiProcessPredictWorker', 'MultiProcessQueuePredictWorker',
-           'MultiThreadAsyncPredictor']
+__all__ = ['MultiThreadAsyncPredictor']
 
 
 class MultiProcessPredictWorker(multiprocessing.Process):
@@ -156,15 +154,9 @@ class MultiThreadAsyncPredictor(AsyncPredictorBase):
                 self.input_queue, f, id, batch_size=batch_size)
             for id, f in enumerate(predictors)]
 
-        if six.PY2:
-            # TODO XXX set logging here to avoid affecting TF logging
-            import tornado.options as options
-            options.parse_command_line(['--logging=debug'])
-            logger.warn("MultiThreadAsyncPredictor is inefficient in Python 2! Switch to Python 3 instead.")
-
     def start(self):
         if self._need_default_sess:
-            assert tf.get_default_session() is not None, \
+            assert tfv1.get_default_session() is not None, \
                 "Not session is bind to predictors, " \
                 "MultiThreadAsyncPredictor.start() has to be called under a default session!"
         for t in self.threads:
@@ -172,20 +164,16 @@ class MultiThreadAsyncPredictor(AsyncPredictorBase):
 
     def put_task(self, dp, callback=None):
         """
-        Same as in :meth:`AsyncPredictorBase.put_task`.
+        Args:
+            dp (list): A datapoint as inputs. It could be either batched or not
+                batched depending on the predictor implementation).
+            callback: a thread-safe callback. When the results are ready, it will be called
+                with the "future" object.
+        Returns:
+            concurrent.futures.Future: a Future of results.
         """
         f = Future()
         if callback is not None:
             f.add_done_callback(callback)
         self.input_queue.put((dp, f))
         return f
-
-
-try:
-    if six.PY2:
-        from tornado.concurrent import Future
-    else:
-        from concurrent.futures import Future
-except ImportError:
-    from ..utils.develop import create_dummy_class
-    MultiThreadAsyncPredictor = create_dummy_class('MultiThreadAsyncPredictor', 'tornado.concurrent')  # noqa

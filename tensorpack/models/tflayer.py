@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: tflayer.py
 
@@ -7,7 +5,6 @@ import functools
 import six
 import tensorflow as tf
 
-from ..tfutils.common import get_tf_version_tuple
 from ..tfutils.varreplace import custom_getter_scope
 from ..utils.argtools import get_data_format
 
@@ -17,7 +14,7 @@ __all__ = []
 def map_common_tfargs(kwargs):
     df = kwargs.pop('data_format', None)
     if df is not None:
-        df = get_data_format(df, tfmode=True)
+        df = get_data_format(df, keras_mode=True)
         kwargs['data_format'] = df
 
     old_nl = kwargs.pop('nl', None)
@@ -113,24 +110,3 @@ def rename_tflayer_get_variable():
         'moving_variance': 'variance/EMA',
     }
     return rename_get_variable(mapping)
-
-
-def monkeypatch_tf_layers():
-    if get_tf_version_tuple() < (1, 4):
-        if not hasattr(tf.layers, 'Dense'):
-            from tensorflow.python.layers.core import Dense
-            tf.layers.Dense = Dense
-
-            from tensorflow.python.layers.normalization import BatchNormalization
-            tf.layers.BatchNormalization = BatchNormalization
-
-            from tensorflow.python.layers.convolutional import Conv2DTranspose, Conv2D
-            tf.layers.Conv2DTranspose = Conv2DTranspose
-            tf.layers.Conv2D = Conv2D
-
-            from tensorflow.python.layers.pooling import MaxPooling2D, AveragePooling2D
-            tf.layers.MaxPooling2D = MaxPooling2D
-            tf.layers.AveragePooling2D = AveragePooling2D
-
-
-monkeypatch_tf_layers()

@@ -1,14 +1,12 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: steps.py
 
 """ Some common step callbacks. """
 
-import tensorflow as tf
 import tqdm
 from six.moves import zip
 
+from ..compat import tfv1 as tf
 from ..tfutils.common import get_global_step_var, get_op_tensor_name
 from ..utils import logger
 from ..utils.naming import GLOBAL_STEP_INCR_OP_NAME
@@ -46,14 +44,17 @@ class TensorPrinter(Callback):
 
 
 class ProgressBar(Callback):
-    """ A progress bar based on tqdm. Enabled by default. """
+    """ A progress bar based on tqdm.
+
+    This callback is one of the :func:`DEFAULT_CALLBACKS()`.
+    """
 
     _chief_only = False
 
-    def __init__(self, names=[]):
+    def __init__(self, names=()):
         """
         Args:
-            names(list): list of string, the names of the tensors to monitor
+            names(tuple[str]): the names of the tensors to monitor
                 on the progress bar.
         """
         super(ProgressBar, self).__init__()
@@ -103,7 +104,7 @@ class ProgressBar(Callback):
 
 class MaintainStepCounter(Callback):
     """
-    It maintains the global step in the graph, making sure it's increased by one.
+    It maintains the global step in the graph, making sure it's increased by one at every `hooked_sess.run`.
     This callback is used internally by the trainer, you don't need to worry about it.
     """
 
@@ -142,7 +143,7 @@ class SessionRunTimeout(Callback):
         """
         Args:
             timeout_in_ms (int):
-"""
+        """
         self._timeout = int(timeout_in_ms)
 
         opt = tf.RunOptions(timeout_in_ms=timeout_in_ms)

@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: summary.py
 
@@ -7,10 +5,10 @@
 import re
 from contextlib import contextmanager
 import six
-import tensorflow as tf
 from six.moves import range
 from tensorflow.python.training import moving_averages
 
+from ..compat import tfv1 as tf
 from ..utils import logger
 from ..utils.argtools import graph_memoized
 from ..utils.naming import MOVING_SUMMARY_OPS_KEY
@@ -26,7 +24,7 @@ __all__ = ['add_tensor_summary', 'add_param_summary',
 # some scope stuff to use internally...
 @graph_memoized
 def _get_cached_vs(name):
-    with tf.variable_scope(name) as scope:
+    with tf.compat.v1.variable_scope (name) as scope:
         return scope
 
 
@@ -34,8 +32,8 @@ def _get_cached_vs(name):
 def _enter_vs_reuse_ns(name):
     vs = _get_cached_vs(name)
     # XXX Not good to enter the cached vs directly, because this will clean-up custom getter
-    # with tf.variable_scope(name, reuse=tf.AUTO_REUSE):    # available in 1.4 only
-    with tf.variable_scope(vs):
+    # with tf.compat.v1.variable_scope (name, reuse=tf.AUTO_REUSE):    # available in 1.4 only
+    with tf.compat.v1.variable_scope (vs):
         with tf.name_scope(vs.original_name_scope):
             yield vs
 
@@ -201,6 +199,7 @@ def add_moving_summary(*args, **kwargs):
     """
     Summarize the moving average for scalar tensors.
     This function is a no-op if not calling from main training tower.
+    See tutorial at https://tensorpack.readthedocs.io/tutorial/summary.html
 
     Args:
         args: scalar tensors to summarize
@@ -212,7 +211,8 @@ def add_moving_summary(*args, **kwargs):
             summary op. Default is TF's default (`tf.GraphKeys.SUMMARIES`).
 
     Returns:
-        [tf.Tensor]: list of tensors returned by assign_moving_average,
+        [tf.Tensor]:
+            list of tensors returned by assign_moving_average,
             which can be used to maintain the EMA.
     """
     decay = kwargs.pop('decay', 0.95)
@@ -225,7 +225,7 @@ def add_moving_summary(*args, **kwargs):
     if ctx is not None and not ctx.is_main_training_tower:
         return []
 
-    graph = tf.get_default_graph()
+    graph = tf.compat.v1.get_default_graph()
     try:
         control_flow_ctx = graph._get_control_flow_context()
         # XLA does not support summaries anyway
@@ -245,10 +245,11 @@ def add_moving_summary(*args, **kwargs):
         assert x.get_shape().ndims == 0, \
             "add_moving_summary() only accepts scalar tensor! Got one with {}".format(x.get_shape())
 
+    from ..graph_builder.utils import override_to_local_variable
     ema_ops = []
     for c in args:
         name = re.sub('tower[0-9]+/', '', c.op.name)
-        with tf.name_scope(None):
+        with tf.name_scope(None), override_to_local_variable(True):
             if not c.dtype.is_floating:
                 c = tf.cast(c, tf.float32)
             # assign_moving_average creates variables with op names, therefore clear ns first.

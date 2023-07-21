@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: gradproc.py
 
@@ -10,6 +8,7 @@ from abc import ABCMeta, abstractmethod
 import six
 import tensorflow as tf
 
+from ..compat import tfv1
 from ..utils import logger
 from .summary import add_moving_summary
 from .symbolic_functions import print_stat, rms
@@ -42,11 +41,11 @@ class GradientProcessor(object):
 
         # reuse the old name_scope, if process() is called multiple times
         if self._name_scope is None:
-            with tf.name_scope(type(self).__name__) as scope:
+            with tfv1.name_scope(type(self).__name__) as scope:
                 self._name_scope = scope
                 return self._process(grads)
         else:
-            with tf.name_scope(self._name_scope):
+            with tfv1.name_scope(self._name_scope):
                 return self._process(grads)
 
     @abstractmethod
@@ -120,7 +119,7 @@ class MapGradient(GradientProcessor):
                 If it return None, the gradient is discarded (hence no update to the variable will happen).
             regex (str): used to match variables. Defaults to match all variables.
         """
-        args = inspect.getargspec(func).args
+        args = inspect.getfullargspec(func).args
         arg_num = len(args) - inspect.ismethod(func)
         assert arg_num in [1, 2], \
             "The function must take 1 or 2 arguments!  ({})".format(args)
@@ -177,7 +176,7 @@ class SummaryGradient(MapGradient):
             return grad
         if name not in SummaryGradient._summaried_gradient:
             SummaryGradient._summaried_gradient.add(name)
-            tf.summary.histogram(name + '-grad', grad, collections=self._coll)
+            tfv1.summary.histogram(name + '-grad', grad, collections=self._coll)
             add_moving_summary(rms(grad, name=name + '/rms'))
         return grad
 

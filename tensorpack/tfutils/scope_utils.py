@@ -1,15 +1,13 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: scope_utils.py
 
 
 import functools
 from contextlib import contextmanager
-import tensorflow as tf
 
+from ..compat import tfv1 as tf
 from ..utils.argtools import graph_memoized
-from .common import get_tf_version_tuple
+from ..utils import logger
 
 __all__ = ['auto_reuse_variable_scope', 'cached_name_scope', 'under_name_scope']
 
@@ -29,7 +27,7 @@ def auto_reuse_variable_scope(func):
 
         myfunc(x1)  # will inherit parent scope reuse
         myfunc(x2)  # will reuse
-        with tf.variable_scope('newscope'):
+        with tf.compat.v1.variable_scope ('newscope'):
             myfunc(x3)  # will inherit parent scope reuse
             myfunc(x4)  # will reuse
     """
@@ -38,17 +36,11 @@ def auto_reuse_variable_scope(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         scope = tf.get_variable_scope()
-        h = hash((tf.get_default_graph(), scope.name))
+        h = hash((tf.compat.v1.get_default_graph(), scope.name))
         # print("Entering " + scope.name + " reuse: " + str(h in used_scope))
         if h in used_scope:
-            if get_tf_version_tuple() >= (1, 5):
-                with tf.variable_scope(scope, reuse=True, auxiliary_name_scope=False):
-                    return func(*args, **kwargs)
-            else:
-                ns = tf.get_default_graph().get_name_scope()
-                with tf.variable_scope(scope, reuse=True), \
-                        tf.name_scope(ns + '/' if ns else ''):
-                    return func(*args, **kwargs)
+            with tf.compat.v1.variable_scope (scope, reuse=True, auxiliary_name_scope=False):
+                return func(*args, **kwargs)
         else:
             used_scope.add(h)
             return func(*args, **kwargs)
@@ -67,6 +59,9 @@ def under_name_scope(name_scope=None):
         1. The 'name_scope' keyword argument when the decorated function is called.
         2. The 'name_scope' argument of the decorator.
         3. (default) The name of the decorated function itself.
+
+        If the name is taken and cannot be used, a warning will be
+        printed in the first case.
 
     Example:
 
@@ -88,12 +83,24 @@ def under_name_scope(name_scope=None):
     def _impl(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
+            warn_incorrect_scope = 'name_scope' in kwargs
             scopename = kwargs.pop('name_scope', name_scope)
             if scopename is None:
                 scopename = func.__name__
 
-            with tf.name_scope(scopename):
-                return func(*args, **kwargs)
+            if warn_incorrect_scope:
+                # cached_name_scope will try to reenter the existing scope
+                with cached_name_scope(scopename, top_level=False) as scope:
+                    scope = scope.strip('/')
+                    # but it can still conflict with an existing tensor
+                    if not scope.endswith(scopename):
+                        logger.warn(""" \
+Calling function {} with name_scope='{}', but actual name scope becomes '{}'.  \
+The name '{}' might be taken.""".format(func.__name__, scopename, scope.split('/')[-1], scopename))
+                    return func(*args, **kwargs)
+            else:
+                with tf.name_scope(scopename):
+                    return func(*args, **kwargs)
         return wrapper
     return _impl
 
@@ -121,7 +128,7 @@ def under_variable_scope():
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             name = func.__name__
-            with tf.variable_scope(name):
+            with tf.compat.v1.variable_scope (name):
                 return func(*args, **kwargs)
         return wrapper
     return _impl
@@ -145,7 +152,7 @@ def cached_name_scope(name, top_level=True):
             It will not be nested under any existing name scope of the caller.
     """
     if not top_level:
-        current_ns = tf.get_default_graph().get_name_scope()
+        current_ns = tf.compat.v1.get_default_graph().get_name_scope()
         if current_ns:
             name = current_ns + '/' + name
     ns = _get_cached_ns(name)

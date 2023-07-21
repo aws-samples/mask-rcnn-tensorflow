@@ -1,8 +1,5 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: concurrency.py
-
 
 import multiprocessing as mp
 
@@ -28,7 +25,7 @@ class StartProcOrThread(Callback):
             stop_at_last (bool): whether to stop the processes or threads
                 after training. It will use :meth:`Process.terminate()` or
                 :meth:`StoppableThread.stop()`, but will do nothing on normal
-                `threading.Thread` or other startable objects.
+                ``threading.Thread`` or other startable objects.
         """
         if not isinstance(startable, list):
             startable = [startable]

@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: monitor.py
 
@@ -14,18 +12,19 @@ import time
 from collections import defaultdict
 from datetime import datetime
 import six
-import tensorflow as tf
+import threading
 
+from ..compat import tfv1 as tf
 from ..libinfo import __git_version__
 from ..tfutils.summary import create_image_summary, create_scalar_summary
-from ..utils import logger
+from ..utils import fs, logger
 from ..utils.develop import HIDE_DOC
 from .base import Callback
 
 __all__ = ['MonitorBase', 'Monitors',
            'TFEventWriter', 'JSONWriter',
            'ScalarPrinter', 'SendMonitorData',
-           'TrainingMonitor', 'CometMLMonitor']
+           'CometMLMonitor']
 
 
 def image_to_nhwc(arr):
@@ -55,7 +54,9 @@ class MonitorBase(Callback):
     _chief_only = False
 
     def setup_graph(self, trainer):
+        # Set attributes following Callback.setup_graph
         self.trainer = trainer
+        self.graph = tf.compat.v1.get_default_graph()
         self._setup_graph()
 
     def _setup_graph(self):
@@ -99,12 +100,6 @@ class MonitorBase(Callback):
     # TODO process other types
 
 
-TrainingMonitor = MonitorBase
-"""
-Old name
-"""
-
-
 class NoOpMonitor(MonitorBase):
     def __init__(self, name=None):
         self._name = name
@@ -120,8 +115,8 @@ class Monitors(Callback):
     Merge monitors together for trainer to use.
 
     In training, each trainer will create a :class:`Monitors` instance,
-    and you can access it through `trainer.monitors`.
-    You should use `trainer.monitors` for logging and it will dispatch your
+    and you can access it through ``trainer.monitors``.
+    You should use ``trainer.monitors`` for logging and it will dispatch your
     logs to each sub-monitor.
     """
 
@@ -244,7 +239,7 @@ class TFEventWriter(MonitorBase):
         if logdir is None:
             logdir = logger.get_logger_dir()
         assert tf.gfile.IsDirectory(logdir), logdir
-        self._logdir = logdir
+        self._logdir = fs.normpath(logdir)
         self._max_queue = max_queue
         self._flush_secs = flush_secs
         self._split_files = split_files
@@ -261,8 +256,18 @@ class TFEventWriter(MonitorBase):
 
     def _setup_graph(self):
         self._writer = tf.summary.FileWriter(
-            self._logdir, graph=tf.get_default_graph(),
-            max_queue=self._max_queue, flush_secs=self._flush_secs)
+            self._logdir, max_queue=self._max_queue, flush_secs=self._flush_secs)
+
+    def _write_graph(self):
+        self._writer.add_graph(self.graph)
+
+    def _before_train(self):
+        # Writing the graph is expensive (takes ~2min) when the graph is large.
+        # Therefore use a separate thread. It will then run in the
+        # background while TF is warming up in the first several iterations.
+        self._write_graph_thread = threading.Thread(target=self._write_graph)
+        self._write_graph_thread.daemon = True
+        self._write_graph_thread.start()
 
     @HIDE_DOC
     def process_summary(self, summary):
@@ -301,12 +306,14 @@ class JSONWriter(MonitorBase):
             return NoOpMonitor("JSONWriter")
 
     @staticmethod
-    def load_existing_json():
+    def load_existing_json(dir=None):
         """
-        Look for an existing json under :meth:`logger.get_logger_dir()` named "stats.json",
+        Look for an existing json under dir (defaults to
+        :meth:`logger.get_logger_dir()`) named "stats.json",
         and return the loaded list of statistics if found. Returns None otherwise.
         """
-        dir = logger.get_logger_dir()
+        if dir is None:
+            dir = logger.get_logger_dir()
         fname = os.path.join(dir, JSONWriter.FILENAME)
         if tf.gfile.Exists(fname):
             with open(fname) as f:
@@ -316,12 +323,12 @@ class JSONWriter(MonitorBase):
         return None
 
     @staticmethod
-    def load_existing_epoch_number():
+    def load_existing_epoch_number(dir=None):
         """
         Try to load the latest epoch number from an existing json stats file (if any).
         Returns None if not found.
         """
-        stats = JSONWriter.load_existing_json()
+        stats = JSONWriter.load_existing_json(dir)
         try:
             return int(stats[-1]['epoch_num'])
         except Exception:
@@ -420,7 +427,7 @@ class ScalarPrinter(MonitorBase):
         def compile_regex(rs):
             if rs is None:
                 return None
-            rs = set([re.compile(r) for r in rs])
+            rs = {re.compile(r) for r in rs}
             return rs
 
         self._whitelist = compile_regex(whitelist)
@@ -545,47 +552,60 @@ class SendMonitorData(MonitorBase):
 
 class CometMLMonitor(MonitorBase):
     """
-    Send data to https://www.comet.ml.
+    Send scalar data and the graph to https://www.comet.ml.
 
     Note:
         1. comet_ml requires you to `import comet_ml` before importing tensorflow or tensorpack.
-        2. The "automatic output logging" feature will make the training progress bar appear to freeze.
+        2. The "automatic output logging" feature of comet_ml will make the training progress bar appear to freeze.
            Therefore the feature is disabled by default.
     """
-    def __init__(self, experiment=None, api_key=None, tags=None, **kwargs):
+    def __init__(self, experiment=None, tags=None, **kwargs):
         """
         Args:
             experiment (comet_ml.Experiment): if provided, invalidate all other arguments
-            api_key (str): your comet.ml API key
             tags (list[str]): experiment tags
-            kwargs: other arguments passed to :class:`comet_ml.Experiment`.
+            kwargs: arguments used to initialize :class:`comet_ml.Experiment`,
+                such as project name, API key, etc.
+                Refer to its documentation for details.
         """
         if experiment is not None:
             self._exp = experiment
-            assert api_key is None and tags is None and len(kwargs) == 0
+            assert tags is None and len(kwargs) == 0
         else:
             from comet_ml import Experiment
             kwargs.setdefault('log_code', True)  # though it's not functioning, git patch logging requires it
             kwargs.setdefault('auto_output_logging', None)
-            self._exp = Experiment(api_key=api_key, **kwargs)
+            self._exp = Experiment(**kwargs)
             if tags is not None:
                 self._exp.add_tags(tags)
 
-        self._exp.set_code("Code logging is impossible because there are too many files ...")
+        self._exp.set_code("Code logging is impossible ...")
         self._exp.log_dependency('tensorpack', __git_version__)
 
     @property
     def experiment(self):
         """
-        Returns: the :class:`comet_ml.Experiment` instance.
+        The :class:`comet_ml.Experiment` instance.
         """
         return self._exp
 
     def _before_train(self):
-        self._exp.set_model_graph(tf.get_default_graph())
+        self._exp.set_model_graph(tf.compat.v1.get_default_graph())
 
+    @HIDE_DOC
     def process_scalar(self, name, val):
         self._exp.log_metric(name, val, step=self.global_step)
+
+    @HIDE_DOC
+    def process_image(self, name, val):
+        self._exp.set_step(self.global_step)
+        for idx, v in enumerate(val):
+            log_name = "{}_step{}{}".format(
+                name,
+                self.global_step,
+                "_" + str(idx) if len(val) > 1 else "")
+
+            self._exp.log_image(v, image_format="jpeg", name=log_name, image_minmax=(0, 255))
 
     def _after_train(self):
         self._exp.end()

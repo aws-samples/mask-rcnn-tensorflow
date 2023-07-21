@@ -1,12 +1,8 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: sesscreate.py
 
 
-import tensorflow as tf
-
-from ..tfutils.common import tfv1
+from ..compat import tfv1 as tf
 from ..utils import logger
 from .common import get_default_sess_config
 
@@ -21,7 +17,22 @@ A SessionCreator should:
 """
 
 
-class NewSessionCreator(tfv1.train.SessionCreator):
+_WRN1 = """User-provided custom session config may not work due to TF bugs. If you saw logs like
+```
+tensorflow/core/common_runtime/gpu/gpu_device.cc:1433] Found device 0 with properties:
+```
+before this line, then your GPU has been initialized and custom GPU options may not take effect. """
+
+_WRN2 = """To workaround this issue, you can do one of the following:
+1. Avoid initializing the GPU too early. Find code that initializes the GPU and skip it.
+   Typically examples are: creating a session; check GPU availability; check GPU number.
+2. Manually set your GPU options earlier. You can create a session with custom
+   GPU options at the beginning of your program, as described in
+   https://github.com/tensorpack/tensorpack/issues/497
+"""
+
+
+class NewSessionCreator(tf.train.SessionCreator):
     def __init__(self, target='', config=None):
         """
         Args:
@@ -37,20 +48,50 @@ class NewSessionCreator(tfv1.train.SessionCreator):
             config = get_default_sess_config()
         else:
             self.user_provided_config = True
-            logger.warn(
-                "User-provided custom session config may not work due to TF \
-bugs. See https://github.com/tensorpack/tensorpack/issues/497 for workarounds.")
+            logger.warn(_WRN1)
+            logger.warn(_WRN2)
         self.config = config
 
     def create_session(self):
         sess = tf.Session(target=self.target, config=self.config)
-        sess.run(tf.global_variables_initializer())
-        sess.run(tf.local_variables_initializer())
-        sess.run(tf.tables_initializer())
+
+        def blocking_op(x):
+            """
+            Whether an op is possibly blocking.
+            """
+            if x.op_def is not None and not x.op_def.is_stateful:
+                return False
+            if "Dequeue" in x.type or "Enqueue" in x.type:
+                return True
+            if "Unstage" in x.type:
+                return True
+            if x.type in ["ZMQPull"]:
+                return True
+            return False
+
+        def run(op):
+            try:
+                from tensorflow.contrib.graph_editor import get_backward_walk_ops  # deprecated
+            except ImportError:
+                from tensorflow.python.ops.op_selector import get_backward_walk_ops
+
+            deps = get_backward_walk_ops(op, control_inputs=True)
+            for dep_op in deps:
+                if blocking_op(dep_op):
+                    logger.warn(
+                        "Initializer '{}' depends on a blocking op '{}'. "
+                        "This initializer is likely to hang!".format(
+                            op.name, dep_op.name))
+
+            sess.run(op)
+
+        run(tf.global_variables_initializer())
+        run(tf.local_variables_initializer())
+        run(tf.tables_initializer())
         return sess
 
 
-class ReuseSessionCreator(tfv1.train.SessionCreator):
+class ReuseSessionCreator(tf.train.SessionCreator):
     """
     Returns an existing session.
     """
@@ -65,9 +106,13 @@ class ReuseSessionCreator(tfv1.train.SessionCreator):
         return self.sess
 
 
-class SessionCreatorAdapter(tfv1.train.SessionCreator):
+class SessionCreatorAdapter(tf.train.SessionCreator):
     """
     Apply a function on the output of a SessionCreator. Can be used to create a debug session.
+
+    Note:
+    Since TF 1.6, debug session may not work properly with Monitored session.
+    This is a tensorflow bug. To use tfdbg, use the :class:`TFLocalCLIDebugHook` callback instead.
     """
     def __init__(self, session_creator, func):
         """

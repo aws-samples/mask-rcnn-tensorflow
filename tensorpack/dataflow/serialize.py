@@ -1,14 +1,13 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: serialize.py
 
 import numpy as np
 import os
+import platform
 from collections import defaultdict
 
 from ..utils import logger
-from ..utils.compatible_serialize import dumps, loads
+from ..utils.serialize import dumps, loads
 from ..utils.develop import create_dummy_class  # noqa
 from ..utils.utils import get_tqdm
 from .base import DataFlow
@@ -33,7 +32,15 @@ class LMDBSerializer():
     Serialize a Dataflow to a lmdb database, where the keys are indices and values
     are serialized datapoints.
 
-    You will need to `pip install lmdb` to use it.
+    You will need to ``pip install lmdb`` to use it.
+
+    Example:
+
+    .. code-block:: python
+
+        LMDBSerializer.save(my_df, "output.lmdb")
+
+        new_df = LMDBSerializer.load("output.lmdb", shuffle=True)
     """
     @staticmethod
     def save(df, path, write_frequency=5000):
@@ -42,6 +49,7 @@ class LMDBSerializer():
             df (DataFlow): the DataFlow to serialize.
             path (str): output path. Either a directory or an lmdb file.
             write_frequency (int): the frequency to write back data to disk.
+                A smaller value reduces memory usage.
         """
         assert isinstance(df, DataFlow), type(df)
         isdir = os.path.isdir(path)
@@ -49,10 +57,31 @@ class LMDBSerializer():
             assert not os.path.isfile(os.path.join(path, 'data.mdb')), "LMDB file exists!"
         else:
             assert not os.path.isfile(path), "LMDB file {} exists!".format(path)
+        # It's OK to use super large map_size on Linux, but not on other platforms
+        # See: https://github.com/NVIDIA/DIGITS/issues/206
+        map_size = 1099511627776 * 2 if platform.system() == 'Linux' else 128 * 10**6
         db = lmdb.open(path, subdir=isdir,
-                       map_size=1099511627776 * 2, readonly=False,
+                       map_size=map_size, readonly=False,
                        meminit=False, map_async=True)    # need sync() at the end
         size = _reset_df_and_get_size(df)
+
+        # put data into lmdb, and doubling the size if full.
+        # Ref: https://github.com/NVIDIA/DIGITS/pull/209/files
+        def put_or_grow(txn, key, value):
+            try:
+                txn.put(key, value)
+                return txn
+            except lmdb.MapFullError:
+                pass
+            txn.abort()
+            curr_size = db.info()['map_size']
+            new_size = curr_size * 2
+            logger.info("Doubling LMDB map_size to {:.2f}GB".format(new_size / 10**9))
+            db.set_mapsize(new_size)
+            txn = db.begin(write=True)
+            txn = put_or_grow(txn, key, value)
+            return txn
+
         with get_tqdm(total=size) as pbar:
             idx = -1
 
@@ -60,7 +89,7 @@ class LMDBSerializer():
             # although it has a context manager interface
             txn = db.begin(write=True)
             for idx, dp in enumerate(df):
-                txn.put(u'{:08}'.format(idx).encode('ascii'), dumps(dp))
+                txn = put_or_grow(txn, u'{:08}'.format(idx).encode('ascii'), dumps(dp))
                 pbar.update()
                 if (idx + 1) % write_frequency == 0:
                     txn.commit()
@@ -69,7 +98,7 @@ class LMDBSerializer():
 
             keys = [u'{:08}'.format(k).encode('ascii') for k in range(idx + 1)]
             with db.begin(write=True) as txn:
-                txn.put(b'__keys__', dumps(keys))
+                txn = put_or_grow(txn, b'__keys__', dumps(keys))
 
             logger.info("Flushing database ...")
             db.sync()
@@ -83,7 +112,11 @@ class LMDBSerializer():
             and run deserialization as a mapper in parallel.
         """
         df = LMDBData(path, shuffle=shuffle)
-        return MapData(df, lambda dp: loads(dp[1]))
+        return MapData(df, LMDBSerializer._deserialize_lmdb)
+
+    @staticmethod
+    def _deserialize_lmdb(dp):
+        return loads(dp[1])
 
 
 class NumpySerializer():
@@ -110,7 +143,9 @@ class NumpySerializer():
 
     @staticmethod
     def load(path, shuffle=True):
-        buffer = np.load(path)['buffer']
+        # allow_pickle defaults to False since numpy 1.16.3
+        # (https://www.numpy.org/devdocs/release.html#unpickling-while-loading-requires-explicit-opt-in)
+        buffer = np.load(path, allow_pickle=True)['buffer']
         return DataFromList(buffer, shuffle=shuffle)
 
 
@@ -128,17 +163,10 @@ class TFRecordSerializer():
             df (DataFlow): the DataFlow to serialize.
             path (str): output tfrecord file.
         """
-        if os.environ.get('TENSORPACK_COMPATIBLE_SERIALIZE', 'msgpack') == 'msgpack':
-            def _dumps(dp):
-                return dumps(dp)
-        else:
-            def _dumps(dp):
-                return dumps(dp).to_pybytes()
-
         size = _reset_df_and_get_size(df)
         with tf.python_io.TFRecordWriter(path) as writer, get_tqdm(total=size) as pbar:
             for dp in df:
-                writer.write(_dumps(dp))
+                writer.write(dumps(dp))
                 pbar.update()
 
     @staticmethod
@@ -203,7 +231,7 @@ except ImportError:
     LMDBSerializer = create_dummy_class('LMDBSerializer', 'lmdb')   # noqa
 
 try:
-    import tensorflow as tf
+    from tensorpack.compat import tfv1 as tf
 except ImportError:
     TFRecordSerializer = create_dummy_class('TFRecordSerializer', 'tensorflow')   # noqa
 

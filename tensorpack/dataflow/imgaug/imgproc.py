@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: imgproc.py
 
@@ -7,20 +5,22 @@
 import numpy as np
 import cv2
 
-from .base import ImageAugmentor
+from ...utils.develop import log_deprecated
+from .base import PhotometricAugmentor
 
 __all__ = ['Hue', 'Brightness', 'BrightnessScale', 'Contrast', 'MeanVarianceNormalize',
            'GaussianBlur', 'Gamma', 'Clip', 'Saturation', 'Lighting', 'MinMaxNormalize']
 
 
-class Hue(ImageAugmentor):
+class Hue(PhotometricAugmentor):
     """ Randomly change color hue.
     """
 
     def __init__(self, range=(0, 180), rgb=True):
         """
         Args:
-            range(list or tuple): range from which the applied hue offset is selected (maximum [-90,90] or [0,180])
+            range(list or tuple): range from which the applied hue offset is selected
+                (maximum range can be [-90,90] for both uint8 and float32)
             rgb (bool): whether input is RGB or BGR.
         """
         super(Hue, self).__init__()
@@ -45,7 +45,7 @@ class Hue(ImageAugmentor):
         return img
 
 
-class Brightness(ImageAugmentor):
+class Brightness(PhotometricAugmentor):
     """
     Adjust brightness by adding a random number.
     """
@@ -53,15 +53,14 @@ class Brightness(ImageAugmentor):
         """
         Args:
             delta (float): Randomly add a value within [-delta,delta]
-            clip (bool): clip results to [0,255] if data type is uint8.
+            clip (bool): clip results to [0,255] even when data type is not uint8.
         """
         super(Brightness, self).__init__()
         assert delta > 0
         self._init(locals())
 
     def _get_augment_params(self, _):
-        v = self._rand_range(-self.delta, self.delta)
-        return v
+        return self._rand_range(-self.delta, self.delta)
 
     def _augment(self, img, v):
         old_dtype = img.dtype
@@ -72,7 +71,7 @@ class Brightness(ImageAugmentor):
         return img.astype(old_dtype)
 
 
-class BrightnessScale(ImageAugmentor):
+class BrightnessScale(PhotometricAugmentor):
     """
     Adjust brightness by scaling by a random factor.
     """
@@ -80,14 +79,13 @@ class BrightnessScale(ImageAugmentor):
         """
         Args:
             range (tuple): Randomly scale the image by a factor in (range[0], range[1])
-            clip (bool): clip results to [0,255] if data type is uint8.
+            clip (bool): clip results to [0,255] even when data type is not uint8.
         """
         super(BrightnessScale, self).__init__()
         self._init(locals())
 
     def _get_augment_params(self, _):
-        v = self._rand_range(*self.range)
-        return v
+        return self._rand_range(*self.range)
 
     def _augment(self, img, v):
         old_dtype = img.dtype
@@ -98,7 +96,7 @@ class BrightnessScale(ImageAugmentor):
         return img.astype(old_dtype)
 
 
-class Contrast(ImageAugmentor):
+class Contrast(PhotometricAugmentor):
     """
     Apply ``x = (x - mean) * contrast_factor + mean`` to each channel.
     """
@@ -108,12 +106,12 @@ class Contrast(ImageAugmentor):
         Args:
             factor_range (list or tuple): an interval to randomly sample the `contrast_factor`.
             rgb (bool or None): if None, use the mean per-channel.
-            clip (bool): clip to [0, 255] if data type is uint8.
+            clip (bool): clip to [0, 255] even when data type is not uint8.
         """
         super(Contrast, self).__init__()
         self._init(locals())
 
-    def _get_augment_params(self, img):
+    def _get_augment_params(self, _):
         return self._rand_range(*self.factor_range)
 
     def _augment(self, img, r):
@@ -135,7 +133,7 @@ class Contrast(ImageAugmentor):
         return img.astype(old_dtype)
 
 
-class MeanVarianceNormalize(ImageAugmentor):
+class MeanVarianceNormalize(PhotometricAugmentor):
     """
     Linearly scales the image to have zero mean and unit norm.
     ``x = (x - mean) / adjusted_stddev``
@@ -164,29 +162,43 @@ class MeanVarianceNormalize(ImageAugmentor):
         return img
 
 
-class GaussianBlur(ImageAugmentor):
+class GaussianBlur(PhotometricAugmentor):
     """ Gaussian blur the image with random window size"""
 
-    def __init__(self, max_size=3):
+    def __init__(self, size_range=(0, 3), sigma_range=(0, 0), symmetric=True, max_size=None):
         """
         Args:
-            max_size (int): max possible Gaussian window size would be 2 * max_size + 1
+            size_range (tuple[int]): Gaussian window size would be 2 * size +
+                1, where size is randomly sampled from this [low, high) range.
+            sigma_range (tuple[float]): min,max of the sigma value. 0 means
+                opencv's default.
+            symmetric (bool): whether to use the same size & sigma for x and y.
+            max_size (int): deprecated
         """
         super(GaussianBlur, self).__init__()
+        if not isinstance(size_range, (list, tuple)):
+            size_range = (0, size_range)
+        assert isinstance(sigma_range, (list, tuple)), sigma_range
+        if max_size is not None:
+            log_deprecated("GaussianBlur(max_size=)", "Use size_range= instead!", "2020-09-01")
+            size_range = (0, max_size)
         self._init(locals())
 
-    def _get_augment_params(self, img):
-        sx, sy = self.rng.randint(self.max_size, size=(2,))
-        sx = sx * 2 + 1
-        sy = sy * 2 + 1
-        return sx, sy
+    def _get_augment_params(self, _):
+        size_xy = self.rng.randint(self.size_range[0], self.size_range[1], size=(2,)) * 2 + 1
+        sigma_xy = self._rand_range(*self.sigma_range, size=(2,))
+        if self.symmetric:
+            size_xy[1] = size_xy[0]
+            sigma_xy[1] = sigma_xy[0]
+        return tuple(size_xy), tuple(sigma_xy)
 
-    def _augment(self, img, s):
-        return np.reshape(cv2.GaussianBlur(img, s, sigmaX=0, sigmaY=0,
+    def _augment(self, img, prm):
+        size, sigma = prm
+        return np.reshape(cv2.GaussianBlur(img, size, sigmaX=sigma[0], sigmaY=sigma[1],
                                            borderType=cv2.BORDER_REPLICATE), img.shape)
 
 
-class Gamma(ImageAugmentor):
+class Gamma(PhotometricAugmentor):
     """ Randomly adjust gamma """
     def __init__(self, range=(-0.5, 0.5)):
         """
@@ -209,7 +221,7 @@ class Gamma(ImageAugmentor):
         return ret
 
 
-class Clip(ImageAugmentor):
+class Clip(PhotometricAugmentor):
     """ Clip the pixel values """
 
     def __init__(self, min=0, max=255):
@@ -220,23 +232,23 @@ class Clip(ImageAugmentor):
         self._init(locals())
 
     def _augment(self, img, _):
-        img = np.clip(img, self.min, self.max)
-        return img
+        return np.clip(img, self.min, self.max)
 
 
-class Saturation(ImageAugmentor):
+class Saturation(PhotometricAugmentor):
     """ Randomly adjust saturation.
         Follows the implementation in `fb.resnet.torch
         <https://github.com/facebook/fb.resnet.torch/blob/master/datasets/transforms.lua#L218>`__.
     """
 
-    def __init__(self, alpha=0.4, rgb=True):
+    def __init__(self, alpha=0.4, rgb=True, clip=True):
         """
         Args:
             alpha(float): maximum saturation change.
             rgb (bool): whether input is RGB or BGR.
+            clip (bool): clip results to [0,255] even when data type is not uint8.
         """
-        super(Saturation, self).__init__()
+        super().__init__()
         rgb = bool(rgb)
         assert alpha < 1
         self._init(locals())
@@ -249,12 +261,12 @@ class Saturation(ImageAugmentor):
         m = cv2.COLOR_RGB2GRAY if self.rgb else cv2.COLOR_BGR2GRAY
         grey = cv2.cvtColor(img, m)
         ret = img * v + (grey * (1 - v))[:, :, np.newaxis]
-        if old_dtype == np.uint8:
+        if self.clip or old_dtype == np.uint8:
             ret = np.clip(ret, 0, 255)
         return ret.astype(old_dtype)
 
 
-class Lighting(ImageAugmentor):
+class Lighting(PhotometricAugmentor):
     """ Lighting noise, as in the paper
         `ImageNet Classification with Deep Convolutional Neural Networks
         <https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf>`_.
@@ -262,23 +274,24 @@ class Lighting(ImageAugmentor):
         <https://github.com/facebook/fb.resnet.torch/blob/master/datasets/transforms.lua#L184>`__.
     """
 
-    def __init__(self, std, eigval, eigvec):
+    def __init__(self, std, eigval, eigvec, clip=True):
         """
         Args:
             std (float): maximum standard deviation
             eigval: a vector of (3,). The eigenvalues of 3 channels.
             eigvec: a 3x3 matrix. Each column is one eigen vector.
+            clip (bool): clip results to [0,255] even when data type is not uint8.
         """
-        eigval = np.asarray(eigval)
-        eigvec = np.asarray(eigvec)
+        super(Lighting, self).__init__()
+        eigval = np.asarray(eigval, dtype="float32")
+        eigvec = np.asarray(eigvec, dtype="float32")
         assert eigval.shape == (3,)
         assert eigvec.shape == (3, 3)
         self._init(locals())
 
     def _get_augment_params(self, img):
         assert img.shape[2] == 3
-        ret = self.rng.randn(3) * self.std
-        return ret.astype('float32')
+        return (self.rng.randn(3) * self.std).astype("float32")
 
     def _augment(self, img, v):
         old_dtype = img.dtype
@@ -286,12 +299,12 @@ class Lighting(ImageAugmentor):
         v = v.reshape((3, 1))
         inc = np.dot(self.eigvec, v).reshape((3,))
         img = np.add(img, inc)
-        if old_dtype == np.uint8:
+        if self.clip or old_dtype == np.uint8:
             img = np.clip(img, 0, 255)
         return img.astype(old_dtype)
 
 
-class MinMaxNormalize(ImageAugmentor):
+class MinMaxNormalize(PhotometricAugmentor):
     """
     Linearly scales the image to the range [min, max].
 

@@ -1,13 +1,11 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-# -*- coding: utf-8 -*-
-# File: model.py
 
 import tensorflow as tf
+from MaskRCNN.performance import print_runtime_shape, print_runtime_tensor
 
 from tensorpack.models import Conv2D, FullyConnected, layer_register
 from tensorpack.tfutils.argscope import argscope
-from tensorpack.tfutils.common import get_tf_version_tuple
 from tensorpack.tfutils.scope_utils import under_name_scope
 from tensorpack.tfutils.summary import add_moving_summary
 from tensorpack.utils.argtools import memoized_method
@@ -15,11 +13,11 @@ from tensorpack.utils.argtools import memoized_method
 from model.backbone import GroupNorm
 from config import config as cfg
 from model_box import decode_bbox_target, encode_bbox_target
-from utils.mixed_precision import mixed_precision_scope
+#from utils.mixed_precision import mixed_precision_scope
 
 
 @layer_register(log_shape=True)
-def boxclass_outputs(feature, num_classes, seed_gen, class_agnostic_regression=False):
+def boxclass_outputs(feature, num_classes,  seed_gen, class_agnostic_regression=False):
     """
     Args:
         feature: features generated from FasterRCNN head function, Num_boxes x Num_features
@@ -43,89 +41,95 @@ def boxclass_outputs(feature, num_classes, seed_gen, class_agnostic_regression=F
 
 
 @under_name_scope()
-def boxclass_losses(labels, label_logits, fg_boxes, fg_box_logits):
+def boxclass_losses(labels_gt, labels_pred, fg_boxes_gt, fg_boxes_pred):
     """
     Args:
-        labels: Num_boxes
-        label_logits:  Num_boxes x Num_classes
-        fg_boxes: Num_fg_boxes x 4, encoded
-        fg_box_logits: Num_boxes x Num_classes x 4 (default) or Num_boxes x 1 x 4 (class agnostic)
+        labels_gt: Num_boxes
+        labels_pred:  Num_boxes x Num_classes
+        fg_boxes_gt: Num_fg_boxes x 4, encoded
+        fg_boxes_pred: Num_boxes x Num_classes x 4 (default) or Num_boxes x 1 x 4 (class agnostic)
 
     Returns:
         label_loss, box_loss
     """
-    label_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=labels, logits=label_logits)
-    label_loss = tf.reduce_mean(label_loss, name='label_loss')
+    label_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels_gt, logits=labels_pred)
+    label_loss = tf.math.reduce_mean(label_loss, name='label_loss')
 
-    fg_inds = tf.where(labels > 0)[:, 0]
-    fg_labels = tf.gather(labels, fg_inds)
+    fg_inds = tf.where(labels_gt > 0)[:, 0]
+    fg_labels = tf.gather(labels_gt, fg_inds)
+    
+    #fg_labels = print_runtime_tensor("fg_labels", fg_labels)
+
     num_fg = tf.size(fg_inds, out_type=tf.int64)
     empty_fg = tf.equal(num_fg, 0)
-    if int(fg_box_logits.shape[1]) > 1:
+    if int(fg_boxes_pred.shape[1]) > 1:
         indices = tf.stack(
             [tf.range(num_fg), fg_labels], axis=1)  # #fgx2
-        fg_box_logits = tf.gather_nd(fg_box_logits, indices)
+        fg_boxes_pred = tf.gather_nd(fg_boxes_pred, indices)
     else:
-        fg_box_logits = tf.reshape(fg_box_logits, [-1, 4])
+        fg_boxes_pred = tf.reshape(fg_boxes_pred, [-1, 4])
 
-    with tf.name_scope('label_metrics'), tf.device('/cpu:0'):
-        prediction = tf.argmax(label_logits, axis=1, name='label_prediction')
-        correct = tf.cast(tf.equal(prediction, labels), tf.float32)  # boolean/integer gather is unavailable on GPU
-        accuracy = tf.reduce_mean(correct, name='accuracy')
-        fg_label_pred = tf.argmax(tf.gather(label_logits, fg_inds), axis=1)
+    with tf.name_scope('label_metrics'):
+        prediction = tf.argmax(labels_pred, axis=1, name='label_prediction')
+        correct = tf.cast(tf.math.equal(prediction, labels_gt), tf.float32)  # boolean/integer gather is unavailable on GPU
+        accuracy = tf.math.reduce_mean(correct, name='accuracy')
+        fg_label_pred = tf.argmax(tf.gather(labels_pred, fg_inds), axis=1)
         num_zero = tf.reduce_sum(tf.cast(tf.equal(fg_label_pred, 0), tf.int64), name='num_zero')
         false_negative = tf.where(
             empty_fg, 0., tf.cast(tf.truediv(num_zero, num_fg), tf.float32), name='false_negative')
         fg_accuracy = tf.where(
-            empty_fg, 0., tf.reduce_mean(tf.gather(correct, fg_inds)), name='fg_accuracy')
+            empty_fg, 0., tf.math.reduce_mean(tf.gather(correct, fg_inds)), name='fg_accuracy')
 
-    box_loss = tf.losses.huber_loss(
-        fg_boxes, fg_box_logits, reduction=tf.losses.Reduction.SUM)
-    box_loss = tf.truediv(
-        box_loss, tf.cast(tf.shape(labels)[0], tf.float32), name='box_loss')
+        #fg_accuracy = print_runtime_tensor("fg_accuracy", fg_accuracy)
+
+    box_loss = tf.compat.v1.losses.huber_loss(fg_boxes_gt, fg_boxes_pred, delta=1.0, reduction='none')
+    box_loss = tf.math.reduce_sum(box_loss)
+    box_loss = tf.truediv(box_loss, tf.cast(tf.shape(labels_gt)[0], tf.float32), name='box_loss')
+    
+    #box_loss = print_runtime_tensor("box_loss", box_loss)
+    #label_loss = print_runtime_tensor("label_loss", label_loss)
+    #false_negative = print_runtime_tensor("false_negative", false_negative)
 
     add_moving_summary(label_loss, box_loss, accuracy,
                        fg_accuracy, false_negative, tf.cast(num_fg, tf.float32, name='num_fg_label'))
     return [label_loss, box_loss]
 
 
-@under_name_scope()
 def boxclass_predictions(boxes, scores):
     """
     Generate final results from predictions of all proposals.
 
     Args:
-        boxes: n#classx4 floatbox in float32
-        scores: nx#class
+        boxes: N X #class X 4 floatbox in float32
+        scores: N X #class
 
     Returns:
-        boxes: Kx4
+        boxes: K X 4 (x1,y1,x2,y2)
         scores: K
         labels: K
     """
     assert boxes.shape[1] == cfg.DATA.NUM_CLASS
     assert scores.shape[1] == cfg.DATA.NUM_CLASS
-    boxes = tf.transpose(boxes, [1, 0, 2])[1:, :, :]  # #catxnx4
-    scores = tf.transpose(scores[:, 1:], [1, 0])  # #catxn
+    boxes = tf.transpose(boxes, [1, 0, 2])[1:, :, :]  # #class X N X 4
+    scores = tf.transpose(scores[:, 1:], [1, 0])  # #class X N
 
     max_coord = tf.reduce_max(boxes)
-    filtered_ids = tf.where(scores > cfg.TEST.RESULT_SCORE_THRESH)  # Fx2
-    filtered_boxes = tf.gather_nd(boxes, filtered_ids)  # Fx4
-    filtered_scores = tf.gather_nd(scores, filtered_ids)  # F,
-    cls_per_box = tf.slice(filtered_ids, [0, 0], [-1, 1])
+    filtered_indices = tf.where(scores > cfg.TEST.RESULT_SCORE_THRESH)  # Fx2
+    filtered_boxes = tf.gather_nd(boxes, filtered_indices)  # Fx4
+    filtered_scores = tf.gather_nd(scores, filtered_indices)  # F,
+    cls_per_box = tf.slice(filtered_indices, [0, 0], [-1, 1])
     offsets = tf.cast(cls_per_box, tf.float32) * (max_coord + 1)  # F,1
-    with tf.device('/cpu:0'):
-        selection = tf.image.non_max_suppression(
-            filtered_boxes + offsets,
-            filtered_scores,
-            cfg.TEST.RESULTS_PER_IM,
-            cfg.TEST.FRCNN_NMS_THRESH)
-    filtered_selection = tf.gather(filtered_ids, selection)
-    cat_ids, box_ids = tf.unstack(filtered_selection, axis=1)
-    final_scores = tf.gather(filtered_scores, selection, name='scores')
-    final_labels = tf.add(tf.gather(cls_per_box[:, 0], selection), 1, name='labels')
-    final_boxes = tf.gather(filtered_boxes, selection, name='boxes')
+    
+    selection = tf.image.non_max_suppression(
+        filtered_boxes + offsets,
+        filtered_scores,
+        cfg.TEST.RESULTS_PER_IM,
+        cfg.TEST.FRCNN_NMS_THRESH)
+    filtered_selection = tf.gather(filtered_indices, selection)
+    _, box_ids = tf.unstack(filtered_selection, axis=1)
+    final_scores = tf.gather(filtered_scores, selection)
+    final_labels = tf.add(tf.gather(cls_per_box[:, 0], selection), 1)
+    final_boxes = tf.gather(filtered_boxes, selection)
     return final_boxes, final_scores, final_labels, box_ids
 
 
@@ -136,33 +140,27 @@ FastRCNN heads for FPN:
 
 
 @layer_register(log_shape=True)
-def boxclass_2fc_head(feature, seed_gen, fp16=False):
+def boxclass_2fc_head(feature, seed_gen):
     """
     Fully connected layer for the class and box branch
 
     Args:
-        feature map: The roi feature map, Num_boxes x Num_channels x H_roi x W_roi
+        feature map: The roi feature map, Num_boxes x  H_roi x W_roi x Num_channels
 
     Returns:
         2D head feature: Num_boxes x Num_features
     """
     dim = cfg.FPN.BOXCLASS_FC_HEAD_DIM
-    if fp16:
-        feature = tf.cast(feature, tf.float16)
-
-    with mixed_precision_scope(mixed=fp16):
-        init = tf.variance_scaling_initializer(dtype=tf.float16 if fp16 else tf.float32, seed=seed_gen.next())
-        hidden = FullyConnected('fc6', feature, dim, kernel_initializer=init, activation=tf.nn.relu)
-        hidden = FullyConnected('fc7', hidden, dim, kernel_initializer=init, activation=tf.nn.relu)
-
-    if fp16:
-        hidden = tf.cast(hidden, tf.float32)
+    
+    init = tf.keras.initializers.VarianceScaling(scale=1.0, seed=seed_gen.next())
+    hidden = FullyConnected('fc6', feature, dim, kernel_initializer=init, activation=tf.nn.relu)
+    hidden = FullyConnected('fc7', hidden, dim, kernel_initializer=init, activation=tf.nn.relu)
 
     return hidden
 
 
 @layer_register(log_shape=True)
-def boxclass_Xconv1fc_head(feature, num_convs, norm=None):
+def boxclass_Xconv1fc_head(feature, seed_gen, num_convs, norm=None):
     """
     Args:
         feature (NCHW):
@@ -176,15 +174,17 @@ def boxclass_Xconv1fc_head(feature, num_convs, norm=None):
     assert norm in [None, 'GN'], norm
     l = feature
     with argscope(Conv2D, data_format='channels_first',
-                  kernel_initializer=tf.variance_scaling_initializer(
+                  kernel_initializer=tf.keras.initializers.VarianceScaling (
                       scale=2.0, mode='fan_out',
-                      distribution='untruncated_normal' if get_tf_version_tuple() >= (1, 12) else 'normal')):
+                      distribution='untruncated_normal',
+                      seed=seed_gen.next())):
         for k in range(num_convs):
-            l = Conv2D('conv{}'.format(k), l, cfg.FPN.BOXCLASS_CONV_HEAD_DIM, 3, activation=tf.nn.relu)
+            l = Conv2D('conv{}'.format(k), l, cfg.FPN.BOXCLASS_CONV_HEAD_DIM, 3, activation=tf.nn.relu, seed=seed_gen.next())
             if norm is not None:
                 l = GroupNorm('gn{}'.format(k), l)
         l = FullyConnected('fc', l, cfg.FPN.BOXCLASS_FC_HEAD_DIM,
-                           kernel_initializer=tf.variance_scaling_initializer(), activation=tf.nn.relu)
+                           kernel_initializer=tf.keras.initializers.VarianceScaling(seed=seed_gen.next()), 
+                           activation=tf.nn.relu, seed=seed_gen.next())
     return l
 
 
@@ -203,137 +203,85 @@ class BoxClassHead(object):
     A class to process & decode inputs/outputs of a fastrcnn classification+regression head.
     """
     def __init__(self,
-                 box_logits,
-                 label_logits,
+                 boxes_pred,
+                 labels_pred,
                  bbox_regression_weights,
-                 prepadding_gt_counts,
-                 proposal_boxes):
+                 proposal_rois):
         """
         Args:
-            box_logits: Num_boxes x Num_classes x 4 (default) or Num_boxes x 1 x 4 (class agnostic), the output of the head
-            label_logits: Num_boxes x Num_classes, the output of the head
+            boxes_pred: BS X Num_boxes x Num_classes x 4 (default) or Num_boxes x 1 x 4 (class agnostic), the output of the head
+            labels_pred: BS X Num_boxes x Num_classes, the output of the head
             bbox_regression_weights: a 4 element tensor
-            prepadding_gt_counts: The original gt box number before padding for each image
-            proposal_boxes: Num_boxs x 5
+            proposal_rois: BS X Num_boxs x 4
         """
-        self.box_logits = box_logits
-        self.label_logits = label_logits
-
+        self.boxes_pred = boxes_pred
+        self.labels_pred = labels_pred
         self.bbox_regression_weights = bbox_regression_weights
-        self.prepadding_gt_counts = prepadding_gt_counts
-
-        self.proposal_boxes = proposal_boxes
-
-        self._bbox_class_agnostic = int(box_logits.shape[1]) == 1
-
+        self.proposal_rois = proposal_rois
         self.training_info_available = False
 
-
-    def add_training_info(self,
-                          gt_boxes,
-                          proposal_labels,
-                          proposal_fg_inds,
-                          proposal_fg_boxes,
-                          proposal_fg_labels,
-                          proposal_gt_id_for_each_fg):
+    def add_training_info(self, proposal_boxes_gt, proposal_labels_gt):
         """
         Args:
-            gt_boxes: BS x Num_gt_boxes x 4
-            proposal_labels: 1-D Num_boxes
-            proposal_fg_inds: 1-D Num_fg_boxes
-            proposal_fg_boxes: Num_fg_boxs x 5
-            proposal_fg_labels: 1-D Num_fg_boxes
-            proposal_gt_id_for_each_fg: indices for matching GT of each foreground box, BS x [Num_fg_boxes_per_image]
+            proposal_boxes_gt: BS x Num_samples x 4
+            proposal_labels_gt: BS X Num_samples
         """
-
-        self.gt_boxes = gt_boxes
-        self.proposal_labels = proposal_labels
-        self.proposal_fg_inds = proposal_fg_inds
-        self.proposal_fg_boxes = proposal_fg_boxes
-        self.proposal_fg_labels = proposal_fg_labels
-        self.proposal_gt_id_for_each_fg = proposal_gt_id_for_each_fg
-
+        self.proposal_boxes_gt = proposal_boxes_gt
+        self.proposal_labels_gt = proposal_labels_gt
         self.training_info_available = True
 
-
     @memoized_method
-    def losses(self, batch_size_per_gpu, shortcut=False):
+    def losses(self):
 
         assert self.training_info_available, "In order to calculate losses, we need to know GT info, but " \
                                              "add_training_info was never called"
 
-        if shortcut:
-            proposal_label_loss = tf.cast(tf.reduce_mean(self.proposal_labels), dtype=tf.float32)
-            proposal_boxes_loss = tf.cast(tf.reduce_mean(self.proposal_boxes), dtype=tf.float32)
-            proposal_fg_boxes_loss = tf.cast(tf.reduce_mean(self.proposal_fg_boxes), dtype=tf.float32)
-            gt_box_loss = tf.cast(tf.reduce_mean(self.gt_boxes), dtype=tf.float32)
 
-            bbox_reg_loss = tf.cast(tf.reduce_mean(self.bbox_regression_weights), dtype=tf.float32)
-            label_logit_loss = tf.cast(tf.reduce_mean(self.label_logits), dtype=tf.float32)
+        proposal_rois = tf.reshape(self.proposal_rois, [-1, 4])
+        proposal_boxes_gt = tf.reshape(self.proposal_boxes_gt, [-1, 4])
+        
+        boxes_pred_shape = tf.shape(self.boxes_pred)
+        boxes_pred = tf.reshape(self.boxes_pred, [-1, boxes_pred_shape[-2], 4])
+        
+        proposal_labels_gt = tf.reshape(self.proposal_labels_gt, [-1])
+        
+        labels_pred_shape = tf.shape(self.labels_pred)
+        labels_pred = tf.reshape(self.labels_pred, [-1, labels_pred_shape[-1]])
+        
+        fg_proposal_indices = tf.reshape(tf.where(proposal_labels_gt > 0), [-1])
+        fg_proposal_rois = tf.gather(proposal_rois, fg_proposal_indices) # NumFG x 4
+        fg_proposal_boxes_gt = tf.gather(proposal_boxes_gt, fg_proposal_indices) # NumFG x 4
 
-            total_loss = proposal_label_loss + proposal_boxes_loss + proposal_fg_boxes_loss + gt_box_loss \
-                         + bbox_reg_loss + label_logit_loss
-            return [total_loss]
-
-        all_labels = []
-        all_label_logits = []
-        all_encoded_fg_gt_boxes = []
-        all_fg_box_logits = []
-        for i in range(batch_size_per_gpu):
-
-            single_image_fg_inds_wrt_gt = self.proposal_gt_id_for_each_fg[i]
-
-            single_image_gt_boxes = self.gt_boxes[i, :self.prepadding_gt_counts[i], :] # NumGT x 4
-            gt_for_each_fg = tf.gather(single_image_gt_boxes, single_image_fg_inds_wrt_gt) # NumFG x 4
-            single_image_fg_boxes_indices = tf.where(tf.equal(self.proposal_fg_boxes[:, 0], i))
-            single_image_fg_boxes_indices = tf.squeeze(single_image_fg_boxes_indices, axis=1)
-
-            single_image_fg_boxes = tf.gather(self.proposal_fg_boxes, single_image_fg_boxes_indices) # NumFG x 5
-            single_image_fg_boxes = single_image_fg_boxes[:, 1:]  # NumFG x 4
-
-            encoded_fg_gt_boxes = encode_bbox_target(gt_for_each_fg, single_image_fg_boxes) * self.bbox_regression_weights
-
-            single_image_box_indices = tf.squeeze(tf.where(tf.equal(self.proposal_boxes[:, 0], i)), axis=1)
-            single_image_labels = tf.gather(self.proposal_labels, single_image_box_indices) # Vector len N
-            single_image_label_logits = tf.gather(self.label_logits, single_image_box_indices)
-
-            single_image_fg_box_logits_indices = tf.gather(self.proposal_fg_inds, single_image_fg_boxes_indices)
-            single_image_fg_box_logits = tf.gather(self.box_logits, single_image_fg_box_logits_indices)
-
-            all_labels.append(single_image_labels)
-            all_label_logits.append(single_image_label_logits)
-            all_encoded_fg_gt_boxes.append(encoded_fg_gt_boxes)
-            all_fg_box_logits.append(single_image_fg_box_logits)
-
-
-
+        encoded_fg_boxes_gt = encode_bbox_target(fg_proposal_boxes_gt, fg_proposal_rois)
+        encoded_fg_boxes_gt = encoded_fg_boxes_gt * self.bbox_regression_weights
+        fg_boxes_pred = tf.gather(boxes_pred, fg_proposal_indices)
+        
         return boxclass_losses(
-            tf.concat(all_labels, axis=0),
-            tf.concat(all_label_logits, axis=0),
-            tf.concat(all_encoded_fg_gt_boxes, axis=0),
-            tf.concat(all_fg_box_logits, axis=0)
+            proposal_labels_gt,
+            labels_pred,
+            encoded_fg_boxes_gt,
+            fg_boxes_pred
         )
 
     @memoized_method
     def decoded_output_boxes_batch(self):
-        """ Returns: N x #class x 4 """
-        batch_ids, nobatch_proposal_boxes = tf.split(self.proposal_boxes, [1, 4], 1)
-        anchors = tf.tile(tf.expand_dims(nobatch_proposal_boxes, 1),
-                          [1, cfg.DATA.NUM_CLASS, 1])  # N x #class x 4
+        """ Returns: BS X N x #class x 4 """
+        anchors = tf.tile(tf.expand_dims(self.proposal_rois, 2),
+                          [1, 1, cfg.DATA.NUM_CLASS, 1])  # BS X N x #class x 4
         decoded_boxes = decode_bbox_target(
-                self.box_logits / self.bbox_regression_weights,
+                self.boxes_pred / self.bbox_regression_weights,
                 anchors
         )
-        return decoded_boxes, tf.reshape(batch_ids, [-1])
+        return decoded_boxes
 
 
     @memoized_method
     def decoded_output_boxes(self):
         """ Returns: N x #class x 4 """
-        anchors = tf.tile(tf.expand_dims(self.proposal_boxes, 1),
+        anchors = tf.tile(tf.expand_dims(self.proposal_rois, 1),
                       [1, cfg.DATA.NUM_CLASS, 1])   # N x #class x 4
         decoded_boxes = decode_bbox_target(
-            self.box_logits / self.bbox_regression_weights,
+            self.boxes_pred / self.bbox_regression_weights,
             anchors
         )
         return decoded_boxes
@@ -341,5 +289,5 @@ class BoxClassHead(object):
 
     @memoized_method
     def output_scores(self, name=None):
-        """ Returns: N x #class scores, summed to one for each box."""
-        return tf.nn.softmax(self.label_logits, name=name)
+        """ Returns: BS X N x #class scores, summed to one for each box."""
+        return tf.nn.softmax(self.labels_pred, name=name)

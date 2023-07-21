@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: _old_batch_norm.py
 
@@ -7,7 +5,6 @@ import tensorflow as tf
 from tensorflow.contrib.framework import add_model_variable
 from tensorflow.python.training import moving_averages
 
-from ..tfutils.common import get_tf_version_tuple
 from ..tfutils.tower import get_current_tower_context
 from ..utils import logger
 from ..utils.argtools import get_data_format
@@ -100,7 +97,7 @@ def BatchNorm(inputs, training=None, momentum=0.9, epsilon=1e-5,
                 don't want to fine tune the EMA. EMA will not be updated in
                 this case.
     """
-    data_format = get_data_format(data_format, tfmode=False)
+    data_format = get_data_format(data_format, keras_mode=False)
     shape = inputs.get_shape().as_list()
     ndims = len(shape)
     assert ndims in [2, 4]
@@ -132,9 +129,6 @@ def BatchNorm(inputs, training=None, momentum=0.9, epsilon=1e-5,
             xn = tf.squeeze(xn, [1, 2])
     else:
         if ctx.is_training:
-            assert get_tf_version_tuple() >= (1, 4), \
-                "Fine tuning a BatchNorm model with fixed statistics is only " \
-                "supported after https://github.com/tensorflow/tensorflow/pull/12580 "
             if ctx.is_main_training_tower:  # only warn in first tower
                 logger.warn("[BatchNorm] Using moving_mean/moving_variance in training.")
             # Using moving_mean/moving_variance in training, which means we

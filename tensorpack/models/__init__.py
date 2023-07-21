@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 #  -*- coding: utf-8 -*-
 #  File: __init__.py
 
@@ -45,6 +43,8 @@ for _, module_name, _ in iter_modules(
     if not os.path.isfile(srcpath):
         continue
     if module_name.startswith('_'):
+        continue
+    if "_test" in module_name:
         continue
     if module_name not in _SKIP:
         _global_import(module_name)

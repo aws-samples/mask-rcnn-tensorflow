@@ -1,5 +1,3 @@
-# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# SPDX-License-Identifier: Apache-2.0
 # -*- coding: utf-8 -*-
 # File: regularize.py
 
@@ -7,7 +5,7 @@
 import re
 import tensorflow as tf
 
-from ..tfutils.common import get_tf_version_tuple
+from ..compat import tfv1
 from ..tfutils.tower import get_current_tower_context
 from ..utils import logger
 from ..utils.argtools import graph_memoized
@@ -22,12 +20,8 @@ def _log_once(msg):
     logger.info(msg)
 
 
-if get_tf_version_tuple() <= (1, 12):
-    l2_regularizer = tf.contrib.layers.l2_regularizer
-    l1_regularizer = tf.contrib.layers.l1_regularizer
-else:
-    l2_regularizer = tf.contrib.layers.l2_regularizer
-    l1_regularizer = tf.keras.regularizers.l1
+l2_regularizer = lambda x: tf.keras.regularizers.l2(x * 0.5)  # noqa
+l1_regularizer = tf.keras.regularizers.l1
 
 
 def regularize_cost(regex, func, name='regularize_cost'):
@@ -62,13 +56,13 @@ def regularize_cost(regex, func, name='regularize_cost'):
     # If vars are shared, regularize all of them
     # If vars are replicated, only regularize those in the current tower
     if ctx.has_own_variables:
-        params = ctx.get_collection_in_tower(tf.GraphKeys.TRAINABLE_VARIABLES)
+        params = ctx.get_collection_in_tower(tfv1.GraphKeys.TRAINABLE_VARIABLES)
     else:
-        params = tf.trainable_variables()
+        params = tfv1.trainable_variables()
 
     names = []
 
-    with tf.name_scope(name + '_internals'):
+    with tfv1.name_scope(name + '_internals'):
         costs = []
         for p in params:
             para_name = p.op.name
@@ -121,9 +115,9 @@ def regularize_cost_from_collection(name='regularize_cost'):
     # NOTE: this collection doesn't always grow with towers.
     # It only grows with actual variable creation, but not get_variable call.
     if ctx.has_own_variables:   # be careful of the first tower (name='')
-        losses = ctx.get_collection_in_tower(tf.GraphKeys.REGULARIZATION_LOSSES)
+        losses = ctx.get_collection_in_tower(tfv1.GraphKeys.REGULARIZATION_LOSSES)
     else:
-        losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
+        losses = tfv1.get_collection(tfv1.GraphKeys.REGULARIZATION_LOSSES)
     if len(losses) > 0:
         logger.info("regularize_cost_from_collection() found {} regularizers "
                     "in REGULARIZATION_LOSSES collection.".format(len(losses)))
@@ -169,7 +163,4 @@ def Dropout(x, *args, **kwargs):
     if kwargs.get('training', None) is None:
         kwargs['training'] = get_current_tower_context().is_training
 
-    if get_tf_version_tuple() <= (1, 12):
-        return tf.layers.dropout(x, rate=rate, **kwargs)
-    else:
-        return tf.nn.dropout(x, rate=rate if kwargs['training'] else 0.)
+    return tf.nn.dropout(x, rate=rate if kwargs['training'] else 0.)

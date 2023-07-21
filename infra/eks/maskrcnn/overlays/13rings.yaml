@@ -1,8 +1,0 @@
-set:
-  maskrcnn:
-    nccl_min_rings: 13
-
-append:
-  global:
-    name: -13rings
-
