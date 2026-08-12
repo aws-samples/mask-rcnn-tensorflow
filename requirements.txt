@@ -3,7 +3,7 @@ opencv-python==4.8.1.78
 Cython==0.29.33
 pycocotools==2.0.6
 matplotlib==3.7.1
-markdown==3.4.3
+markdown==3.8.1
 pybind11==2.10.0
 scikit-image==0.19.3
 numba==0.56.4
