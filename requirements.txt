@@ -1,4 +1,4 @@
-ujson==5.12.1
+ujson==5.13.0
 opencv-python==4.8.1.78
 Cython==0.29.33
 pycocotools==2.0.6
